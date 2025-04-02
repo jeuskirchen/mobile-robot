@@ -1,6 +1,8 @@
 import pygame
 import math
+import random
 from generate_map import generate_map
+
 
 # Constants
 WIDTH, HEIGHT = 800, 800
@@ -30,7 +32,22 @@ font = pygame.font.SysFont(None, 18)
 robot_x, robot_y = WIDTH // 2, HEIGHT // 2
 robot_angle = -90  # In degrees
 
+# Motor speed  -------------------------------------------------------
+v_l = 0  # Left motor speed
+v_r = 0  # Right motor speed
+
 obstacles = generate_map(WIDTH, HEIGHT, cell_size=120) 
+
+
+
+def is_robot_colliding(x, y, obstacles):
+    """Checks if the robot's position collides with any obstacles."""
+    robot_rect = pygame.Rect(x - ROBOT_RADIUS, y - ROBOT_RADIUS, ROBOT_RADIUS * 2, ROBOT_RADIUS * 2)
+    for obs in obstacles:
+        if robot_rect.colliderect(obs):
+            return True
+    return False
+
 
 def calculate_sensors(x, y, angle):
     sensors = []
@@ -59,7 +76,12 @@ def calculate_sensors(x, y, angle):
         sensors.append((sensor_x, sensor_y, hit, distance))
     return sensors
 
-def draw_robot(x, y, angle, sensors):
+
+
+
+# Function to draw the robot and its sensors
+# I edited this to draw the motor speed values inside the robot circle ----------------
+def draw_robot(x, y, angle, sensors, v_l, v_r):
     # Draw sensors based on precomputed data
     for sensor_x, sensor_y, hit, _ in sensors:
         color = SENSOR_HIT_COLOR if hit else SENSOR_COLOR
@@ -72,6 +94,26 @@ def draw_robot(x, y, angle, sensors):
     heading_x = x + ROBOT_RADIUS * math.cos(math.radians(angle))
     heading_y = y + ROBOT_RADIUS * math.sin(math.radians(angle))
     pygame.draw.line(screen, (0, 0, 0), (x, y), (heading_x, heading_y), 3)
+
+    # Draw motor speed values (text)
+    v_l_text = font.render(f"L: {v_l}", True, (255, 255, 255))
+    v_r_text = font.render(f"R: {v_r}", True, (255, 255, 255))
+
+    # Display motor speed text inside the robot body
+    screen.blit(v_l_text, (x - 20, y - 10))  # Adjust position for left motor speed
+    screen.blit(v_r_text, (x - 20, y + 10))  # Adjust position for right motor speed
+
+    # Draw sensor distance values around the robot (text)
+    for i, (_, _, hit, distance) in enumerate(sensors):
+        sensor_angle = math.radians(angle + i * SENSOR_ANGLE_STEP)
+        text_x = x + (ROBOT_RADIUS + 20) * math.cos(sensor_angle)  # Position outside the robot
+        text_y = y + (ROBOT_RADIUS + 20) * math.sin(sensor_angle)
+
+        # Handle infinite distance
+        distance_display = "∞" if distance == float("inf") else f"{int(distance)}"
+        distance_text = font.render(distance_display, True, (255, 255, 255) if hit else (100, 100, 100))
+        screen.blit(distance_text, (text_x - 10, text_y - 10))  # Center the text
+
 
 def draw_info(screen, x, y, angle, font):
     """Draw the robot's position and angle on the screen."""
@@ -98,6 +140,14 @@ def move_robot(x, y, angle, speed):
 
     return new_x, new_y
 
+
+# Makes sure the robot is not placed on top of or inside an obstacle
+while is_robot_colliding(robot_x, robot_y, obstacles):
+    # Reposition the robot randomly within the map bounds
+    robot_x = random.randint(ROBOT_RADIUS, WIDTH - ROBOT_RADIUS)
+    robot_y = random.randint(ROBOT_RADIUS, HEIGHT - ROBOT_RADIUS)
+
+
 # Main loop
 running = True
 while running:
@@ -105,18 +155,43 @@ while running:
         if event.type == pygame.QUIT:
             running = False
 
+    # Reset motor speeds at the start of each frame -------------------------------
+    v_l, v_r = 0, 0
+
     # Handle key presses for movement and rotation
     # TODO: should of course only be two actions: v_l and v_r for differential drive 
     keys = pygame.key.get_pressed()
-    if keys[pygame.K_LEFT]:
-        # Counterclockwise rotation
-        robot_angle = (robot_angle - ROTATE_SPEED) % 360
-    if keys[pygame.K_RIGHT]:
-        # Clockwise rotation 
-        robot_angle = (robot_angle + ROTATE_SPEED) % 360
-    if keys[pygame.K_w]:  
-        # Forward
+    if keys[pygame.K_w] and keys[pygame.K_LEFT]:
+        # Move forward while turning left
         robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
+        robot_angle = (robot_angle - ROTATE_SPEED) % 360  # Adjust angle for turning
+        v_l, v_r = MOVE_SPEED - 1, MOVE_SPEED  # Left motor slower than right motor
+
+    elif keys[pygame.K_w] and keys[pygame.K_RIGHT]:
+        # Move forward while turning right
+        robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
+        robot_angle = (robot_angle + ROTATE_SPEED) % 360  # Adjust angle for turning
+        v_l, v_r = MOVE_SPEED, MOVE_SPEED - 1  # Right motor slower than left motor
+
+    elif keys[pygame.K_w]:
+        # Move forward
+        robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
+        v_l, v_r = MOVE_SPEED, MOVE_SPEED  # Both motors move forward at the same speed
+
+    elif keys[pygame.K_LEFT]:
+        # Rotate in place counterclockwise
+        robot_angle = (robot_angle - ROTATE_SPEED) % 360
+        v_l, v_r = -ROTATE_SPEED, ROTATE_SPEED  # Left motor backward, right motor forward
+
+    elif keys[pygame.K_RIGHT]:
+        # Rotate in place clockwise
+        robot_angle = (robot_angle + ROTATE_SPEED) % 360
+        v_l, v_r = ROTATE_SPEED, -ROTATE_SPEED  # Right motor backward, left motor forward
+
+    else:
+        # No movement
+        v_l, v_r = 0, 0 
+    
 
     # Calculate sensors once per frame
     sensors = calculate_sensors(robot_x, robot_y, robot_angle)
@@ -135,7 +210,7 @@ while running:
         pygame.draw.rect(screen, OBSTACLE_COLOR, obs)
 
     # Draw robot with sensors and info 
-    draw_robot(robot_x, robot_y, robot_angle, sensors)
+    draw_robot(robot_x, robot_y, robot_angle, sensors, v_l, v_r) # added motor speeds ---------------
     draw_info(screen, robot_x//STEP_SIZE, robot_y//STEP_SIZE, 360-robot_angle, font)
 
     pygame.display.flip()
