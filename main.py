@@ -6,9 +6,9 @@ from generate_map import generate_map
 
 # Constants
 WIDTH, HEIGHT = 800, 800
-ROBOT_RADIUS = 20
+ROBOT_RADIUS = 10
 STEP_SIZE = 5 
-SENSOR_LENGTH = 100 
+SENSOR_LENGTH = 50 
 NUM_SENSORS = 12
 SENSOR_ANGLE_STEP = 360/NUM_SENSORS
 BACKGROUND_COLOR = (30, 30, 30)
@@ -36,7 +36,7 @@ robot_angle = -90  # In degrees
 v_l = 0  # Left motor speed
 v_r = 0  # Right motor speed
 
-obstacles = generate_map(WIDTH, HEIGHT, cell_size=120) 
+obstacles = generate_map(WIDTH, HEIGHT, cell_size=50) 
 
 
 
@@ -55,14 +55,12 @@ def calculate_sensors(x, y, angle):
         sensor_angle = math.radians(angle + i * SENSOR_ANGLE_STEP)
         hit = False
         distance = float("inf")  
-        sensor_x, sensor_y = x, y
-
+        sensor_x, sensor_y = x, y 
         # Step along the line to detect the closest intersection
         for d in range(0, SENSOR_LENGTH, STEP_SIZE):  
             sensor_x = x + d * math.cos(sensor_angle)
             sensor_y = y + d * math.sin(sensor_angle)
             point = (int(sensor_x), int(sensor_y))
-
             # Check collision with obstacles
             for obs in obstacles:
                 if obs.collidepoint(point):

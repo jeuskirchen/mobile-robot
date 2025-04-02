@@ -1,7 +1,7 @@
 import random
 from pygame import Rect 
 
-def generate_map(width, height, cell_size=40, density=0.2):
+def generate_map(width, height, cell_size=10, density=0.2):
     """
     Generates a map with randomly placed blocks.
     - density: Fraction of the map area to be covered with obstacles (0.0 to 1.0).
