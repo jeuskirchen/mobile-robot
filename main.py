@@ -156,40 +156,29 @@ while running:
     # Reset motor speeds at the start of each frame -------------------------------
     v_l, v_r = 0, 0
 
-    # Handle key presses for movement and rotation
-    # TODO: should of course only be two actions: v_l and v_r for differential drive 
     keys = pygame.key.get_pressed()
-    if keys[pygame.K_w] and keys[pygame.K_LEFT]:
-        # Move forward while turning left
-        robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
-        robot_angle = (robot_angle - ROTATE_SPEED) % 360  # Adjust angle for turning
-        v_l, v_r = MOVE_SPEED - 1, MOVE_SPEED  # Left motor slower than right motor
 
-    elif keys[pygame.K_w] and keys[pygame.K_RIGHT]:
-        # Move forward while turning right
-        robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
-        robot_angle = (robot_angle + ROTATE_SPEED) % 360  # Adjust angle for turning
-        v_l, v_r = MOVE_SPEED, MOVE_SPEED - 1  # Right motor slower than left motor
-
+    if keys[pygame.K_w] and keys[pygame.K_RIGHT]:
+        v_l, v_r = MOVE_SPEED, MOVE_SPEED
     elif keys[pygame.K_w]:
-        # Move forward
-        robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
-        v_l, v_r = MOVE_SPEED, MOVE_SPEED  # Both motors move forward at the same speed
-
-    elif keys[pygame.K_LEFT]:
-        # Rotate in place counterclockwise
-        robot_angle = (robot_angle - ROTATE_SPEED) % 360
-        v_l, v_r = -ROTATE_SPEED, ROTATE_SPEED  # Left motor backward, right motor forward
-
+        v_l, v_r = MOVE_SPEED, MOVE_SPEED - 1  # Left wheel faster → turn left
     elif keys[pygame.K_RIGHT]:
-        # Rotate in place clockwise
-        robot_angle = (robot_angle + ROTATE_SPEED) % 360
-        v_l, v_r = ROTATE_SPEED, -ROTATE_SPEED  # Right motor backward, left motor forward
-
+        v_l, v_r = MOVE_SPEED - 1, MOVE_SPEED  # Right wheel faster → turn right
     else:
-        # No movement
-        v_l, v_r = 0, 0 
-    
+        v_l, v_r = 0, 0
+
+    # Move robot using motor speeds
+    v = (v_r + v_l) / 2
+    omega = (v_r - v_l) / 40  # wheel base hardcoded for now
+    robot_angle += math.degrees(omega)
+    dx = v * math.cos(math.radians(robot_angle))
+    dy = v * math.sin(math.radians(robot_angle))
+    new_x = robot_x + dx
+    new_y = robot_y + dy
+
+    if not is_robot_colliding(new_x, new_y, obstacles):
+        robot_x, robot_y = new_x, new_y
+
 
     # Calculate sensors once per frame
     sensors = calculate_sensors(robot_x, robot_y, robot_angle)
