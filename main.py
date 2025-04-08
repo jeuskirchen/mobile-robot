@@ -106,11 +106,13 @@ def draw_robot(x, y, angle, sensors, v_l, v_r):
         sensor_angle = math.radians(angle + i * SENSOR_ANGLE_STEP)
         text_x = x + (ROBOT_RADIUS + 20) * math.cos(sensor_angle)  # Position outside the robot
         text_y = y + (ROBOT_RADIUS + 20) * math.sin(sensor_angle)
-
+        
         # Handle infinite distance
         distance_display = "∞" if distance == float("inf") else f"{int(distance)}"
         distance_text = font.render(distance_display, True, (255, 255, 255) if hit else (100, 100, 100))
-        screen.blit(distance_text, (text_x - 10, text_y - 10))  # Center the text
+        # Get the rectangle of the text and center it
+        text_rect = distance_text.get_rect(center=(text_x, text_y))
+        screen.blit(distance_text, text_rect)
 
 
 def draw_info(screen, x, y, angle, font):
@@ -121,6 +123,9 @@ def draw_info(screen, x, y, angle, font):
     screen.blit(text_surface, text_rect)
 
 # Function to move the robot along its heading
+# This funciotn now handles collisions with obstacles and allows sliding along walls
+# and also checks for collisions with the map boundaries--------------------------
+# (all the sliding handeling and what not is contained only in this move_robot funciton)
 def move_robot(x, y, angle, speed):
     # Calculate new position based on current angle
     dx = speed * math.cos(math.radians(angle))
@@ -130,12 +135,38 @@ def move_robot(x, y, angle, speed):
     new_x = x + dx
     new_y = y + dy
 
-    # Collision check (basic)
+    # Collision check
     robot_rect = pygame.Rect(new_x - ROBOT_RADIUS, new_y - ROBOT_RADIUS, ROBOT_RADIUS * 2, ROBOT_RADIUS * 2)
+    x_clear = True
+    y_clear = True
+
     for obs in obstacles:
         if robot_rect.colliderect(obs):
-            return x, y  # Prevent movement if collision detected
+            # Check for sliding along the wall
+            # Try moving only in the x direction
+            temp_x = x + dx
+            temp_rect_x = pygame.Rect(temp_x - ROBOT_RADIUS, y - ROBOT_RADIUS, ROBOT_RADIUS * 2, ROBOT_RADIUS * 2)
+            if temp_rect_x.colliderect(obs):
+                x_clear = False
 
+            # Try moving only in the y direction
+            temp_y = y + dy
+            temp_rect_y = pygame.Rect(x - ROBOT_RADIUS, temp_y - ROBOT_RADIUS, ROBOT_RADIUS * 2, ROBOT_RADIUS * 2)
+            if temp_rect_y.colliderect(obs):
+                y_clear = False
+
+    # Resolve movement based on collision checks
+    if not x_clear and not y_clear:
+        # Block movement completely if both directions are blocked
+        return x, y
+    elif not x_clear:
+        # Allow sliding along the y-axis
+        return x, y + dy
+    elif not y_clear:
+        # Allow sliding along the x-axis
+        return x + dx, y
+
+    # If no collision, move to the new position
     return new_x, new_y
 
 
@@ -153,32 +184,60 @@ while running:
         if event.type == pygame.QUIT:
             running = False
 
-    # Reset motor speeds at the start of each frame -------------------------------
+    # # Reset motor speeds at the start of each frame -------------------------------
+    # v_l, v_r = 0, 0
+
+    # # Handle key presses for movement and rotation
+    # # TODO: should of course only be two actions: v_l and v_r for differential drive 
+    # keys = pygame.key.get_pressed()
+    # if keys[pygame.K_w] and keys[pygame.K_LEFT]:
+    #     # Move forward while turning left
+    #     robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
+    #     robot_angle = (robot_angle - ROTATE_SPEED) % 360  # Adjust angle for turning
+    #     v_l, v_r = MOVE_SPEED - 1, MOVE_SPEED  # Left motor slower than right motor
+
+    # elif keys[pygame.K_w] and keys[pygame.K_RIGHT]:
+    #     # Move forward while turning right
+    #     robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
+    #     robot_angle = (robot_angle + ROTATE_SPEED) % 360  # Adjust angle for turning
+    #     v_l, v_r = MOVE_SPEED, MOVE_SPEED - 1  # Right motor slower than left motor
+
+    # elif keys[pygame.K_w]:
+    #     # Move forward
+    #     robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
+    #     v_l, v_r = MOVE_SPEED, MOVE_SPEED  # Both motors move forward at the same speed
+
+    # elif keys[pygame.K_LEFT]:
+    #     # Rotate in place counterclockwise
+    #     robot_angle = (robot_angle - ROTATE_SPEED) % 360
+    #     v_l, v_r = -ROTATE_SPEED, ROTATE_SPEED  # Left motor backward, right motor forward
+
+    # elif keys[pygame.K_RIGHT]:
+    #     # Rotate in place clockwise
+    #     robot_angle = (robot_angle + ROTATE_SPEED) % 360
+    #     v_l, v_r = ROTATE_SPEED, -ROTATE_SPEED  # Right motor backward, left motor forward
+
+    # else:
+    #     # No movement
+    #     v_l, v_r = 0, 0 
+    
+    # Reset motor speeds at the start of each frame
     v_l, v_r = 0, 0
 
+    # Handle key presses for motor control
     keys = pygame.key.get_pressed()
+    if keys[pygame.K_w]:  # "W" key controls the left motor
+        v_l = MOVE_SPEED
+    if keys[pygame.K_UP]:  # Up arrow key controls the right motor
+        v_r = MOVE_SPEED
 
-    if keys[pygame.K_w] and keys[pygame.K_RIGHT]:
-        v_l, v_r = MOVE_SPEED, MOVE_SPEED
-    elif keys[pygame.K_w]:
-        v_l, v_r = MOVE_SPEED, MOVE_SPEED - 1  # Left wheel faster → turn left
-    elif keys[pygame.K_RIGHT]:
-        v_l, v_r = MOVE_SPEED - 1, MOVE_SPEED  # Right wheel faster → turn right
-    else:
-        v_l, v_r = 0, 0
+    # Calculate the robot's movement based on motor speeds
+    linear_speed = (v_l + v_r) / 2  # Average speed of both motors
+    angular_speed = (v_r - v_l) / ROBOT_RADIUS  # Differential rotation
 
-    # Move robot using motor speeds
-    v = (v_r + v_l) / 2
-    omega = (v_r - v_l) / 40  # wheel base hardcoded for now
-    robot_angle += math.degrees(omega)
-    dx = v * math.cos(math.radians(robot_angle))
-    dy = v * math.sin(math.radians(robot_angle))
-    new_x = robot_x + dx
-    new_y = robot_y + dy
-
-    if not is_robot_colliding(new_x, new_y, obstacles):
-        robot_x, robot_y = new_x, new_y
-
+    # Update the robot's position and angle
+    robot_angle = (robot_angle + math.degrees(angular_speed)) % 360
+    robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, linear_speed)
 
     # Calculate sensors once per frame
     sensors = calculate_sensors(robot_x, robot_y, robot_angle)
