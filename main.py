@@ -199,7 +199,7 @@ def to_video():
         os.mkdir("screencapture")
     timestamp = dt.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     filename = f"screencapture/main {timestamp}.mp4"
-    print("Saving file as {filename}") 
+    print(f"Saving file as {filename}") 
     with imageio.get_writer(filename, fps=60, codec="libx264") as writer: 
         for frame in frames[1:]:
             writer.append_data(np.array(frame))
