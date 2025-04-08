@@ -1,7 +1,12 @@
+import os 
 import pygame
 import math
 import random
+import numpy as np 
 from generate_map import generate_map
+from PIL import Image 
+import imageio.v2 as imageio 
+import datetime as dt 
 
 
 # Constants
@@ -18,6 +23,7 @@ OBSTACLE_COLOR = (100, 100, 100)
 SENSOR_HIT_COLOR = (230, 0, 0)
 MOVE_SPEED = 3
 ROTATE_SPEED = 3
+SCREENCAPTURE = True 
 
 # Initialize PyGame
 pygame.init()
@@ -37,6 +43,9 @@ v_l = 0  # Left motor speed
 v_r = 0  # Right motor speed
 
 obstacles = generate_map(WIDTH, HEIGHT, cell_size=50) 
+
+last_frame = None 
+frames = []
 
 
 
@@ -170,6 +179,33 @@ def move_robot(x, y, angle, speed):
     return new_x, new_y
 
 
+def save_frame(): 
+    global frames, last_frame 
+    frame_surface = pygame.display.get_surface().copy()
+    frame_array3d = pygame.surfarray.array3d(frame_surface) 
+    # Only add if frame is not empty and different from last frame 
+    if (frame_array3d.sum() > 0) and (last_frame is None or (frame_array3d != last_frame).any()):
+        frame_array = pygame.image.tostring(frame_surface, "RGB")
+        frame = Image.frombytes("RGB", frame_surface.get_size(), frame_array)
+        frames.append(frame) 
+        last_frame = frame_array3d
+
+
+def to_video():
+    global frames
+    if len(frames) == 0: 
+        return
+    if not os.path.exists("screencapture"):
+        os.mkdir("screencapture")
+    timestamp = dt.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    filename = f"screencapture/main {timestamp}.mp4"
+    print("Saving file as {filename}") 
+    with imageio.get_writer(filename, fps=60, codec="libx264") as writer: 
+        for frame in frames[1:]:
+            writer.append_data(np.array(frame))
+
+
+
 # Makes sure the robot is not placed on top of or inside an obstacle
 while is_robot_colliding(robot_x, robot_y, obstacles):
     # Reposition the robot randomly within the map bounds
@@ -181,8 +217,17 @@ while is_robot_colliding(robot_x, robot_y, obstacles):
 running = True
 while running:
     for event in pygame.event.get():
+        mods = pygame.key.get_mods()
         if event.type == pygame.QUIT:
             running = False
+        elif event.type == pygame.KEYDOWN:
+            match event.key:
+                case pygame.K_ESCAPE:
+                    running = False 
+                case pygame.K_s if (mods & pygame.KMOD_META):
+                    to_video() 
+                case pygame.K_s if (mods & pygame.KMOD_CTRL):
+                    to_video() 
 
     # # Reset motor speeds at the start of each frame -------------------------------
     # v_l, v_r = 0, 0
@@ -260,6 +305,7 @@ while running:
     draw_info(screen, robot_x//STEP_SIZE, robot_y//STEP_SIZE, 360-robot_angle, font)
 
     pygame.display.flip()
+    save_frame()
     clock.tick(60)
 
 pygame.quit()
