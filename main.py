@@ -23,7 +23,7 @@ SENSOR_COLOR = (50, 200, 50)
 OBSTACLE_COLOR = (100, 100, 100)
 SENSOR_HIT_COLOR = (230, 0, 0)
 MOVE_SPEED = 3
-ROTATE_SPEED = 3
+ROTATE_SPEED = 0.2
 SCREENCAPTURE = True 
 
 # Initialize PyGame
@@ -85,10 +85,7 @@ def calculate_sensors(x, y, angle):
     return sensors
 
 
-
-
 # Function to draw the robot and its sensors
-# I edited this to draw the motor speed values inside the robot circle ----------------
 def draw_robot(x, y, angle, sensors, v_l, v_r):
     # Draw sensors based on precomputed data
     for sensor_x, sensor_y, hit, _ in sensors:
@@ -229,43 +226,6 @@ while running:
                     to_video() 
                 case pygame.K_s if (mods & pygame.KMOD_CTRL):
                     to_video() 
-
-    # # Reset motor speeds at the start of each frame -------------------------------
-    # v_l, v_r = 0, 0
-
-    # # Handle key presses for movement and rotation
-    # # TODO: should of course only be two actions: v_l and v_r for differential drive 
-    # keys = pygame.key.get_pressed()
-    # if keys[pygame.K_w] and keys[pygame.K_LEFT]:
-    #     # Move forward while turning left
-    #     robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
-    #     robot_angle = (robot_angle - ROTATE_SPEED) % 360  # Adjust angle for turning
-    #     v_l, v_r = MOVE_SPEED - 1, MOVE_SPEED  # Left motor slower than right motor
-
-    # elif keys[pygame.K_w] and keys[pygame.K_RIGHT]:
-    #     # Move forward while turning right
-    #     robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
-    #     robot_angle = (robot_angle + ROTATE_SPEED) % 360  # Adjust angle for turning
-    #     v_l, v_r = MOVE_SPEED, MOVE_SPEED - 1  # Right motor slower than left motor
-
-    # elif keys[pygame.K_w]:
-    #     # Move forward
-    #     robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, MOVE_SPEED)
-    #     v_l, v_r = MOVE_SPEED, MOVE_SPEED  # Both motors move forward at the same speed
-
-    # elif keys[pygame.K_LEFT]:
-    #     # Rotate in place counterclockwise
-    #     robot_angle = (robot_angle - ROTATE_SPEED) % 360
-    #     v_l, v_r = -ROTATE_SPEED, ROTATE_SPEED  # Left motor backward, right motor forward
-
-    # elif keys[pygame.K_RIGHT]:
-    #     # Rotate in place clockwise
-    #     robot_angle = (robot_angle + ROTATE_SPEED) % 360
-    #     v_l, v_r = ROTATE_SPEED, -ROTATE_SPEED  # Right motor backward, left motor forward
-
-    # else:
-    #     # No movement
-    #     v_l, v_r = 0, 0 
     
     # Reset motor speeds at the start of each frame
     v_l, v_r = 0, 0
@@ -282,7 +242,7 @@ while running:
     angular_speed = (v_r - v_l) / ROBOT_RADIUS  # Differential rotation
 
     # Update the robot's position and angle
-    robot_angle = (robot_angle + math.degrees(angular_speed)) % 360
+    robot_angle = (robot_angle + math.degrees(angular_speed) * ROTATE_SPEED) % 360
     robot_x, robot_y = move_robot(robot_x, robot_y, robot_angle, linear_speed)
 
     # Calculate sensors once per frame
@@ -292,7 +252,8 @@ while running:
     for i, (sx, sy, hit, distance) in enumerate(sensors):
         status = "HIT" if hit else "CLEAR"
         if hit: 
-            print(f"Sensor {i + 1}: {status} at ({sx:.1f}, {sy:.1f}), distance {distance}")
+            # print(f"Sensor {i + 1}: {status} at ({sx:.1f}, {sy:.1f}), distance {distance}")
+            pass 
 
     # Drawing
     screen.fill(BACKGROUND_COLOR)
