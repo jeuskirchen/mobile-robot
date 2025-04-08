@@ -1,3 +1,4 @@
+# Authors: Janik, Megan, Zainab
 import os 
 import pygame
 import math

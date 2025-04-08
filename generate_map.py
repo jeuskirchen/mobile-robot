@@ -1,3 +1,4 @@
+# Authors: Janik, Megan, Zainab
 import random
 from pygame import Rect 
 
