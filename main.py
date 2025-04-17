@@ -14,7 +14,7 @@ SCREEN_SIZE = 800
 CELL_SIZE = SCREEN_SIZE//20
 SCREEN_CAPTURE = True 
 # Map
-OBSTACLE_DENSITY = 0.2  # 0.2
+OBSTACLE_DENSITY = 0.2 
 # Colors
 BACKGROUND_COLOR = (30, 30, 30)
 ROBOT_COLOR = (200, 50, 50)
@@ -24,20 +24,14 @@ SENSOR_HIT_COLOR = (230, 0, 0)
 # Robot
 ROBOT_RADIUS = 10
 MOVE_SPEED = 3
-ROTATE_SPEED = 0.75
+ROTATE_SPEED = 0.2
 NUM_SENSORS = 12
 SENSOR_LENGTH = 60
 SENSOR_ANGLE_STEP = 2*pi/NUM_SENSORS
 SENSOR_STEP_SIZE = 5
 # Visibility flags 
-flag_changed = False 
 obstacles_visible = True 
 robot_info_visible = True 
-trajectory_visible = True  
-# Kalman filter settings
-# BITMAP_SIZE = 100
-INITIAL_VAR = np.array([0.1, 0.1, 0.1])
-R = np.diag([0.1, 0.1, 0.1]) 
 
 
 class Environment:
@@ -45,10 +39,8 @@ class Environment:
     # Initialization ---------------------------------------------------------------------------------------------
     
     def __init__(self):
-        self.timestep = 0 
         self.initialize_map()
         self.initialize_robot()
-        self.initialize_belief()
         if SCREEN_CAPTURE:
             self.prev_frame = None 
             self.frames = []
@@ -79,53 +71,38 @@ class Environment:
 
     def initialize_robot(self):
         # Pose 
-        # Important: robot_x, robot_y store the robot's relative position!
-        #  To get the absolute position, add the spawn position (spawn_x, spawn_y)
-        self.robot_x = 0
-        self.robot_y = 0
+        # Important: robot_x, robot_y store the robot's absolute position!
+        #  The robot would generally only have access to its position relative to the spawn point
+        #  i.e. (robot_x-spawn_x, robot_y-spawn_y) 
+        self.robot_x = SCREEN_SIZE/2  # x-position
+        self.robot_y = SCREEN_SIZE/2  # y-position 
         self.robot_angle = 0          # orientation (in radians)
         # Find a good spawn point 
-        self.spawn_x = SCREEN_SIZE/2  # x-position
-        self.spawn_y = SCREEN_SIZE/2  # y-position 
-        # Make sure the robot is not placed on top of or inside an obstacle: 
+        #  Make sure the robot is not placed on top of or inside an obstacle: 
         while self.is_colliding():
             # Reposition the robot's spawn randomly within the map bounds:
-            self.spawn_x = random.randint(ROBOT_RADIUS, SCREEN_SIZE-ROBOT_RADIUS)
-            self.spawn_y = random.randint(ROBOT_RADIUS, SCREEN_SIZE-ROBOT_RADIUS)
-        # List to keep track of robot's trajectory (position in each timestep)
-        self.trajectory = [(0, 0)]
+            self.robot_x = random.randint(ROBOT_RADIUS, SCREEN_SIZE-ROBOT_RADIUS)
+            self.robot_y = random.randint(ROBOT_RADIUS, SCREEN_SIZE-ROBOT_RADIUS)
+        # Save this point as (spawn_x, spawn_y) 
+        self.spawn_x = self.robot_x 
+        self.spawn_y = self.robot_y 
         # Sensors
         # Get initial sensor reading 
         self.compute_sensors()
-        # Just for visualization, also keep track of these values inside self
-        # (rather than just passing them as parameters to the move method)
+        # Just for visualization, also keep track of these values
         self.v_l = 0
         self.v_r = 0
-    
-    def initialize_belief(self):
-        # Belief is the robot's belief of its own pose in absolute terms! 
-        # Initialize belief at spawn point (local localization!) 
-        #  and set small variance.
-        #  For global localization, use random initial point and large variance.
-        self.belief_mean = np.array([self.spawn_x, self.spawn_y, self.robot_angle])
-        self.belief_var = INITIAL_VAR 
-        # Initialize belief trajectory 
-        self.belief_trajectory = [self.belief_mean[:2]]
 
     # Step: transition to the next state -------------------------------------------------------------------------
     
-    def step(self, action):
+    def step(self):
         """
         Transition from current environment state to the next 
         """
-        global flag_changed
         self.compute_sensors()
-        self.update_belief(action) 
         if SCREEN_CAPTURE:
             self.save_frame()
         self.render()
-        self.timestep += 1
-        flag_changed = False 
         clock.tick(60) 
     
     # Motion -----------------------------------------------------------------------------------------------------
@@ -133,60 +110,43 @@ class Environment:
     def move(self, action):
         """
         Parameter 'action' must be a tuple containing (v_l, v_r)
-        Move robot at velocities v_l (left motor), v_r (right motor) 
+        Move robot at velocities v_l (left-motor velocity), v_r (right-motor velocity) 
         """
-        if self.timestep > 0 and action == (0, 0) and not flag_changed:
-            # If there is no movement, no need to calculate new pose
-            #  Unless it's timestep 0; so it renders the map and initial pose
-            #  This also means that time doesn't pass, if no action is taken 
-            return 
         v_l, v_r = action
-        # Keep track of v_l, v_r so we can put it on screen as text 
-        #  (see draw_robot method)
         self.v_l, self.v_r = v_l, v_r 
+        # When passing v_l=1, this is already in units of MOVE_SPEED, so to get absolute units
+        # multiply by MOVE_SPEED: 
+        v_l *= MOVE_SPEED
+        v_r *= MOVE_SPEED 
         # Calculate linear and angular velocities from v_l, v_r 
-        v_linear = MOVE_SPEED * (v_l + v_r) / 2  # Average speed of both motors
-        v_angular = ROTATE_SPEED * (v_r - v_l) / ROBOT_RADIUS  # Differential rotation
+        v_linear = (v_l + v_r) / 2  # Average speed of both motors
+        v_angular = (v_r - v_l) / ROBOT_RADIUS  # Differential rotation
+        new_angle = (self.robot_angle + v_angular * ROTATE_SPEED) % (2*pi)
         # Calculate new position based on current angle
-        d_x = v_linear * math.cos(self.robot_angle)
-        d_y = v_linear * math.sin(self.robot_angle)
-        d_angle = v_angular
+        dx = v_linear * math.cos(new_angle)
+        dy = v_linear * math.sin(new_angle)
         # Calculate the new position
-        new_x = self.robot_x + d_x
-        new_y = self.robot_y + d_y
-        new_angle = self.robot_angle + d_angle 
-        # Make sure angle stays in range [-2π, 2π]:
-        new_angle %= 2*pi 
-        # TODO: add motion noise (I assume we have to use matrix R here?) 
-        #
-        #
+        new_x = self.robot_x + dx
+        new_y = self.robot_y + dy
         # Collision check 
-        robot_rect = pygame.Rect(self.spawn_x + new_x - ROBOT_RADIUS, 
-                                 self.spawn_y + new_y - ROBOT_RADIUS, 
-                                 ROBOT_RADIUS * 2, 
-                                 ROBOT_RADIUS * 2)
+        robot_rect = pygame.Rect(new_x-ROBOT_RADIUS, new_y-ROBOT_RADIUS, ROBOT_RADIUS*2, ROBOT_RADIUS*2)
         x_clear = True
         y_clear = True
         for obs in self.obstacles:
             if robot_rect.colliderect(obs):
                 # Check for sliding along the wall
                 # Try moving only in the x direction
-                temp_x = self.robot_x + d_x
-                temp_rect_x = pygame.Rect(self.spawn_x + temp_x - ROBOT_RADIUS, 
-                                          self.spawn_y + self.robot_y - ROBOT_RADIUS, 
-                                          ROBOT_RADIUS * 2, 
-                                          ROBOT_RADIUS * 2)
+                temp_x = self.robot_x + dx
+                temp_rect_x = pygame.Rect(temp_x-ROBOT_RADIUS, self.robot_y-ROBOT_RADIUS, ROBOT_RADIUS*2, ROBOT_RADIUS*2)
                 if temp_rect_x.colliderect(obs):
                     x_clear = False
                 # Try moving only in the y direction
-                temp_y = self.robot_y + d_y
-                temp_rect_y = pygame.Rect(self.spawn_x + self.robot_x - ROBOT_RADIUS, 
-                                          self.spawn_y + temp_y - ROBOT_RADIUS, 
-                                          ROBOT_RADIUS * 2, 
-                                          ROBOT_RADIUS * 2)
+                temp_y = self.robot_y + dy
+                temp_rect_y = pygame.Rect(self.robot_x-ROBOT_RADIUS, temp_y-ROBOT_RADIUS, ROBOT_RADIUS*2, ROBOT_RADIUS*2)
                 if temp_rect_y.colliderect(obs):
                     y_clear = False
         # Resolve movement based on collision checks
+        new_angle = (self.robot_angle + v_angular * ROTATE_SPEED) % (2*pi)
         if not x_clear and not y_clear:
             # Block movement completely if both directions are blocked
             # Only change angle 
@@ -204,11 +164,7 @@ class Environment:
             self.robot_x = new_x
             self.robot_y = new_y
             self.robot_angle = new_angle
-        # Save new position in trajectory
-        self.trajectory.append((self.robot_x, self.robot_y))
-        # Transition to next state 
-        env.step(action) 
-
+    
     # Sensors ----------------------------------------------------------------------------------------------------
 
     def compute_sensors(self):
@@ -222,9 +178,7 @@ class Environment:
             for d in range(0, SENSOR_LENGTH, SENSOR_STEP_SIZE):  
                 sensor_x = self.robot_x + d * math.cos(sensor_angle)
                 sensor_y = self.robot_y + d * math.sin(sensor_angle)
-                # point = int(sensor_x), int(sensor_y)
-                # Use absolute position just to check collision 
-                point = self.spawn_x + sensor_x, self.spawn_y + sensor_y 
+                point = int(sensor_x), int(sensor_y)
                 # Check collision with obstacles
                 for obs in self.obstacles:
                     if obs.collidepoint(point):
@@ -236,76 +190,8 @@ class Environment:
                     break
             # Important: these are ground-truth sensor measurements
             #  Robot only has access to noisy (hit, distance) data 
-            #  Also, we only append relative positions!! 
-            #  Otherwise, the robot would know its exact position from the sensor readings!
             sensors.append((sensor_x, sensor_y, hit, distance))
         self.sensors = sensors 
-
-    def compute_observation(self):
-        # "observation" = triangulated/trilatered absolute robot position from sensor data 
-        observation = None 
-        # TODO
-        #
-        #
-        #
-        # TODO: add sensor noise (I assume we have to use matrix Q here?)
-        # 
-        #
-        #
-        return observation
-
-    # Kalman filter ----------------------------------------------------------------------------------------------
-
-    def update_belief(self, action): 
-        """
-        Updates the belief using the Kalman filter 
-        Parameter 'action' must be a tuple containing (v_l, v_r) 
-        """
-        # Motion update ("Prediction")
-        #  Simple model of how model moves given the action without 
-        #  any consideration of obstacles
-        v_l, v_r = action 
-        v_linear = MOVE_SPEED * (v_l + v_r) / 2  # Average speed of both motors
-        v_angular = ROTATE_SPEED * (v_r - v_l) / ROBOT_RADIUS  # Differential rotation
-        # Believed orientation:
-        angle = self.belief_mean[2]
-        # u vector: action (we're using linear velocity, angular velocity here)
-        u = np.array([v_linear, v_angular])  
-        # A matrix (effect of environment on next state)
-        #  Assume environment has no effect -> use identity matrix 
-        #  So we can just leave it 
-        # B matrix (effect of taking action u on next state)
-        B = np.array([
-            [np.cos(angle), 0],
-            [np.sin(angle), 0],
-            [0,             1]
-        ])
-        # Update mean 
-        self.belief_mean = self.belief_mean + B.dot(u) 
-        # Make sure angle stays in range [-2π, 2π]:
-        self.belief_mean[2] %= 2*pi  
-        # Update covariance (belief_var)
-        #  Actually just the diagonal of the covariance matrix, as we assume independence, 
-        #  i.e. just the variances 
-        belief_cov = np.diag(self.belief_var) 
-        self.belief_var = (belief_cov + R).diagonal()  # turn diagonal back into vector 
-        print(self.belief_var)
-        
-        # Sensor update ("Correction")
-        # We got self.sensors with entries (sx, sy, hit, distance) 
-        # using triangulation or trilateration 
-        observation = self.compute_observation()
-        # TODO
-        # TODO: might be easier, if we create an occupancy bitmap first and then use this as the map?
-        #  Inside the occupancy bitmap, we could also limit ourselves to a small window around the 
-        #  mean believed position according to the motion model, 
-        #  and the size of the window could depend on the variance 
-        # 
-        # 
-        # 
-
-        # Append believed pose to belief trajectory
-        self.belief_trajectory.append(self.belief_mean[:2])
 
     # Helpers ----------------------------------------------------------------------------------------------------
     
@@ -315,7 +201,7 @@ class Environment:
         of the robot, collides with any obstacles
         """
         if xy is None:
-            x, y = self.spawn_x + self.robot_x, self.spawn_y + self.robot_y 
+            x, y = self.robot_x, self.robot_y 
         else:
             x, y = xy 
         robot_rect = pygame.Rect(x-ROBOT_RADIUS, y-ROBOT_RADIUS, ROBOT_RADIUS*2, ROBOT_RADIUS*2)
@@ -326,36 +212,26 @@ class Environment:
 
     def print_sensors(self):
         for i, (sx, sy, hit, distance) in enumerate(self.sensors):
-            # sx, sy are sensor positions relative to the robot
-            # to get absolute ones add spawn_x, spawn_y respectively 
             status = "HIT" if hit else "CLEAR"
             if hit: 
                 print(f"Sensor {i+1}: {status} at ({sx:.1f}, {sy:.1f}), distance {distance}")
-                # print(f"Sensor {i+1}: {status} at ({sx+spawn_x:.1f}, {sy+spawn_y:.1f}), distance {distance}")
 
     # Drawing ----------------------------------------------------------------------------------------------------
     
     def draw_obstacles(self):
-        if not obstacles_visible:
-            return 
         for obs in self.obstacles: 
             pygame.draw.rect(screen, OBSTACLE_COLOR, obs) 
     
     def draw_robot(self):
-        # Draw trajectory (past positions)
-        if trajectory_visible:
-            for x, y in self.trajectory:
-                pygame.draw.circle(screen, (90, 30, 30), (self.spawn_x+x, self.spawn_y+y), 3)
-        # Get robot's current (absolute) position
-        x, y = self.spawn_x + self.robot_x, self.spawn_y + self.robot_y 
+        global robot_info_visible 
+        x, y = self.robot_x, self.robot_y 
         # Draw sensors 
         if robot_info_visible:
             for sensor_x, sensor_y, hit, _ in self.sensors:
                 color = SENSOR_HIT_COLOR if hit else SENSOR_COLOR
-                pygame.draw.line(screen, color, (x, y), (self.spawn_x+sensor_x, self.spawn_y+sensor_y), 2)
-                pygame.draw.circle(screen, color, (self.spawn_x+sensor_x, self.spawn_y+sensor_y), 3)
+                pygame.draw.line(screen, color, (x, y), (sensor_x, sensor_y), 2)
         # Draw the robot body (disk)
-        pygame.draw.circle(screen, ROBOT_COLOR, (x, y), ROBOT_RADIUS)
+        pygame.draw.circle(screen, ROBOT_COLOR, (int(x), int(y)), ROBOT_RADIUS)
         # Draw the direction line (heading)
         heading_x = x + ROBOT_RADIUS * math.cos(self.robot_angle)
         heading_y = y + ROBOT_RADIUS * math.sin(self.robot_angle)
@@ -374,29 +250,7 @@ class Environment:
                     distance_text = font.render(str(int(distance)), True, (255, 255, 255) if hit else (100, 100, 100))
                     text_rect = distance_text.get_rect(center=(text_x, text_y))
                     screen.blit(distance_text, text_rect)
-
-    def draw_belief(self):
-        # Draw trajectory (i.e. past believed positions)
-        if trajectory_visible:
-            for x, y in self.belief_trajectory:
-                pygame.draw.circle(screen, (30, 30, 90), (x, y), 3)
-        # Get current believed position (mean and variance)
-        mean_x, mean_y, mean_angle = self.belief_mean
-        '''
-        var_x, var_y, var_angle = self.belief_var 
-        # Draw covariance
-        # pygame.draw.circle(screen, (30, 30, 200), (mean_x, mean_y), (var_x+var_y)/2, 2)
-        ellipse = pygame.Rect(mean_x - var_x/2, mean_y - var_y/2, var_x, var_y)
-        # pygame.draw.rect(screen, (30, 30, 200), ellipse, 2) 
-        pygame.draw.ellipse(screen, (30, 30, 200), ellipse, 2)
-        '''
-        # Draw the robot body (disk) at (mean) believed location 
-        pygame.draw.circle(screen, (50, 50, 255), (mean_x, mean_y), ROBOT_RADIUS)
-        # Draw the direction line (heading) of (mean) believed orientation 
-        heading_x = mean_x + ROBOT_RADIUS * math.cos(mean_angle)
-        heading_y = mean_y + ROBOT_RADIUS * math.sin(mean_angle)
-        pygame.draw.line(screen, (0, 0, 0), (mean_x, mean_y), (heading_x, heading_y), 3)
-
+    
     def save_frame(self): 
         frame_surface = pygame.display.get_surface().copy()
         frame_array3d = pygame.surfarray.array3d(frame_surface) 
@@ -423,9 +277,10 @@ class Environment:
                 writer.append_data(np.array(frame))
     
     def render(self):
+        global obstacles_visible 
         screen.fill(BACKGROUND_COLOR)
-        self.draw_obstacles()
-        self.draw_belief()
+        if obstacles_visible:
+            self.draw_obstacles()
         self.draw_robot()
         pygame.display.flip()
 
@@ -453,7 +308,6 @@ if __name__ == "__main__":
             if event.type == pygame.QUIT:
                 running = False 
             elif event.type == pygame.KEYDOWN:
-                flag_changed = True
                 match event.key: 
                     case pygame.K_ESCAPE: 
                         running = False 
@@ -461,14 +315,11 @@ if __name__ == "__main__":
                         # CMD + "S" key saves run so far as mp4 file 
                         env.to_video()
                     case pygame.K_r:
-                        # "R" key toggles robot info visibility 
+                        # "R" key toggles robot info visibility
                         robot_info_visible = not robot_info_visible
                     case pygame.K_o:
                         # "O" key toggles obstacle visibility
                         obstacles_visible = not obstacles_visible
-                    case pygame.K_t:
-                        # "T" key toggles trajectory visibility
-                        trajectory_visible = not trajectory_visible
         
         # Robot controls 
         v_l, v_r = 0, 0
@@ -479,8 +330,10 @@ if __name__ == "__main__":
         if keys[pygame.K_UP]:  
             # UP arrow key controls the right motor
             v_r = 1
-
         # Move the robot according to (v_l, v_r)
         env.move((v_l, v_r))
+
+        # Transition to next state 
+        env.step()
     
     pygame.quit() 
