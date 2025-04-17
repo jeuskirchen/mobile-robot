@@ -5,3 +5,4 @@ jupyterlab
 pillow 
 imageio 
 imageio-ffmpeg
+scipy

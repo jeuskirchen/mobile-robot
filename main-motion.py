@@ -1,57 +1,47 @@
-# TODO: draw ellipse for covariance matrix 
-#  if necessary: debug covariance computation 
+# Beacons are detected only via sensors!
 import os 
 import pygame
 import math 
-from math import pi 
 import numpy as np
+from numpy import pi 
 import random 
 import datetime as dt 
 from PIL import Image 
 import imageio.v2 as imageio 
-from trilaterate import trilaterate
 
 
 # Screen 
 SCREEN_SIZE = 800 
-NUM_CELLS = 20  # number of cells along each axis; ideally, SCREEN_SIZE divisible by it 
+NUM_CELLS = 20  # number of cells along each axis 
 CELL_SIZE = SCREEN_SIZE//NUM_CELLS
 SCREEN_CAPTURE = True 
 # Map
 OBSTACLE_DENSITY = 0.2  # 0.2
-NUM_BEACONS = 100  # 100
 # Colors
 BACKGROUND_COLOR = (30, 30, 30)
 ROBOT_COLOR = (200, 50, 50)
 SENSOR_COLOR = (50, 200, 50)
 OBSTACLE_COLOR = (100, 100, 100)
 SENSOR_HIT_COLOR = (230, 0, 0)
-PASSIVE_BEACON_COLOR = (130, 130, 130) 
-ACTIVE_BEACON_COLOR = (0, 255, 0) 
 # Robot
 ROBOT_RADIUS = 10
 MOVE_SPEED = 3  # linear speed factor 
-ROTATE_SPEED = 1  # angular speed factor
+ROTATE_SPEED = 0.75  # angular speed factor
 NUM_SENSORS = 12
-SENSOR_RANGE = 60  # 60
+SENSOR_LENGTH = 80  # 60
 SENSOR_ANGLE_STEP = 2*pi/NUM_SENSORS
-SENSOR_STEP_SIZE = 4  # ideally, SENSOR_RANGE divisible by it 
-OMNI_RANGE = SENSOR_RANGE  # range around robot where it can detect beacons 
-# Visibility 
+SENSOR_STEP_SIZE = 4  # ideally, SENSOR_LENGTH divisible by it 
+# Visibility flags 
 flag_changed = False 
 obstacles_visible = True 
 robot_info_visible = True 
-trajectory_visible = False    
-beacon_visible = True 
-# Kalman filter 
-# V = np.diag([ 1.0,  1.0,  1.0])  # initial state-estimate covariance 
-# R = np.diag([ 0.01,  0.02,  0.01])  # motion-noise covariance
-# Q = np.diag([1e-4, 1e-4, 1e-4])  # sensor-noise covariance
-# <temp>
-V = np.diag([1e-4, 1e-4, 1e-4])  # initial state-estimate covariance 
-R = np.diag([1e-4, 1e-4, 1e-4])  # motion-noise covariance
-Q = np.diag([1e-4, 1e-4, 1e-4])  # sensor-noise covariance
-# </temp>
+trajectory_visible = True   
+# Kalman filter settings
+# TODO: pick appropriate values for variance, based on noise that we add 
+#  to motion and observation 
+INITIAL_VAR = np.array([1e-6, 1e-6, 1e-6])  # initial state-estimate covariance 
+R = np.diag([1e-6, 1e-6, 1e-6])  # motion noise covariance
+Q = np.diag([1e-6, 1e-6, 1e-6])  # sensor noise covariance
 
 
 class Environment:
@@ -59,12 +49,8 @@ class Environment:
     # Initialization ---------------------------------------------------------------------------------------------
     
     def __init__(self):
-        self.reset()
-    
-    def reset(self):
         self.timestep = 0 
         self.initialize_map()
-        self.initialize_beacons()
         self.initialize_robot()
         self.initialize_belief()
         if SCREEN_CAPTURE:
@@ -95,90 +81,20 @@ class Environment:
             pygame.Rect(SCREEN_SIZE-5, 0, 5, SCREEN_SIZE)   # Right boundary
         ])
 
-    def initialize_beacons(self):
-        """
-        Use obstacle corners as beacons.
-        Only the squares are technically obstacles, and when two squares touch, 
-        I do not count this as a corner and it is not a beacon.
-        I simply take all squares' corners and then remove all points that 
-        appear more than once.
-        """
-        self.beacons = []
-        self.beacon_distances = []
-        self.beacon_bearings = []
-        
-        '''
-        # <temp>
-        # Just for some testing, generate beacons completely randomly 
-        #  and independently of obstacles!! (i.e. not as corners of obstacles!)
-        if NUM_BEACONS > 0:
-            MIN_BEACON_DISTANCE = 0.5 * OMNI_RANGE
-            while True:
-                x, y = np.random.uniform(5, SCREEN_SIZE-5, size=2)
-                # Only actually add to self.beacons if the proposed beacons is sufficiently 
-                #  far away from all existing beacons! 
-                #  This minimum distance (MIN_BEACON_DISTANCE) should not be too large, because then
-                #  the robot will never be in range of 3 beacons for trilateration!! 
-                valid = True 
-                for other_beacon in self.beacons:
-                    if np.linalg.norm(np.array(other_beacon)-np.array([x, y])) < MIN_BEACON_DISTANCE:
-                        valid = False 
-                        break 
-                if valid:
-                    self.beacons.append((x, y))
-                    self.beacon_distances.append(math.inf) 
-                    self.beacon_bearings.append(0)
-                # Once we have NUM_BEACONS beacons, leave the while loop
-                if len(self.beacons) == NUM_BEACONS:
-                    break 
-        # </temp>
-        '''
-
-        # '''
-        if (NUM_BEACONS > 0) or (NUM_BEACONS is None):
-            corners = set()
-            remove = set()
-            for obstacle in self.obstacles:
-                for dx in [0, CELL_SIZE]:
-                    for dy in [0, CELL_SIZE]:
-                        corner = (obstacle.x+dx, obstacle.y+dy)
-                        # TODO: (only a small detail) rectangles that touch the edges of the screen should
-                        #  also be removed 
-                        if corner not in corners:
-                            corners.add(corner)
-                        else:
-                            remove.add(corner)
-            # Remove those corners that have appeared more than once 
-            corners = list(corners - remove)
-            # Go through these corners and turn then into pygame.Rect objects, 
-            #  and then put them into self.beacons and self.beacon_distances
-            #  The latter is simply the list of detected distances, which are initialized to infinity 
-            # Only actually keep NUM_BEACONS random beacons: 
-            if NUM_BEACONS is not None:
-                np.random.shuffle(corners)
-                corners = corners[:NUM_BEACONS]
-            for i, (x, y) in enumerate(corners):
-                self.beacons.append((x, y))
-                self.beacon_distances.append(math.inf) 
-                self.beacon_bearings.append(0)
-        # '''
-
     def initialize_robot(self):
         # Pose 
         # Important: robot_x, robot_y store the robot's relative position!
         #  To get the absolute position, add the spawn position (spawn_x, spawn_y)
         self.robot_x = 0
         self.robot_y = 0
-        self.robot_angle = 0  # orientation (in radians)
+        self.robot_angle = 0          # orientation (in radians)
         # Find a good spawn point 
         self.spawn_x = SCREEN_SIZE/2  # x-position
         self.spawn_y = SCREEN_SIZE/2  # y-position 
+        # self.spawn_angle = 0  
         # TODO: make so that spawn angle could be anything, 
         #  and robot_angle is also relative!! 
-        #  When the robot spawns, it doesn't necessarily know its absolute direction!! 
-        #  Though, if we do local localization, we presumably also tell it its 
-        #  initial orientation.
-        # self.spawn_angle = 0 
+        #  When the robot spawns, it doesn't know its absolute direction!! 
         # Make sure the robot is not placed on top of or inside an obstacle: 
         while self.is_colliding():
             # Reposition the robot's spawn randomly within the map bounds:
@@ -188,7 +104,6 @@ class Environment:
         self.trajectory = [(0, 0)]
         # Sensors
         # Get initial sensor reading 
-        self.compute_omni()
         self.compute_sensors()
         # Just for visualization, also keep track of these values inside self
         # (rather than just passing them as parameters to the move method)
@@ -201,8 +116,9 @@ class Environment:
         #  and set small variance.
         #  For global localization, use random initial point and large variance.
         self.belief_mean = np.array([self.spawn_x, self.spawn_y, self.robot_angle])
-        self.belief_cov = V 
-        # TODO: actually add some noise to this according to V 
+        self.belief_var = INITIAL_VAR 
+        # Initialize other things that are used as part of belief update
+        self.trilateration = None 
         # Initialize belief trajectory 
         self.belief_trajectory = [self.belief_mean[:2]]
 
@@ -214,7 +130,6 @@ class Environment:
         """
         global flag_changed
         self.compute_sensors()
-        self.compute_omni()
         self.update_belief(action) 
         if SCREEN_CAPTURE:
             self.save_frame()
@@ -250,13 +165,11 @@ class Environment:
         new_x = self.robot_x + d_x
         new_y = self.robot_y + d_y
         new_angle = self.robot_angle + d_angle 
-        # Make sure angle stays in range [0, 2π]:
+        # Make sure angle stays in range [-2π, 2π]:
         new_angle %= 2*pi 
-        # Add motion noise (using matrix R) 
-        noise_x, noise_y, noise_angle = np.random.multivariate_normal(np.zeros(3), R, size=1)[0]
-        new_x += noise_x 
-        new_y += noise_y 
-        new_angle += noise_angle 
+        # TODO: add motion noise (I assume we have to use matrix R here?) 
+        #
+        #
         # Collision check 
         robot_rect = pygame.Rect(self.spawn_x + new_x - ROBOT_RADIUS, 
                                  self.spawn_y + new_y - ROBOT_RADIUS, 
@@ -322,11 +235,10 @@ class Environment:
             distance = math.inf 
             sensor_x, sensor_y = self.robot_x, self.robot_y 
             # Step along the line to detect the closest intersection
-            for d in range(0, SENSOR_RANGE, SENSOR_STEP_SIZE):  
+            for d in range(0, SENSOR_LENGTH, SENSOR_STEP_SIZE):  
                 sensor_x = self.robot_x + d * math.cos(sensor_angle)
                 sensor_y = self.robot_y + d * math.sin(sensor_angle)
-                # point = int(sensor_x), int(sensor_y)
-                # Use absolute position just to check collision 
+                # Use absolute position to check collision 
                 point = self.spawn_x + sensor_x, self.spawn_y + sensor_y 
                 # Check collision with obstacles
                 for obs in self.obstacles:
@@ -343,54 +255,10 @@ class Environment:
             #  Otherwise, the robot would know its exact position from the sensor readings!
             self.sensors.append((sensor_x, sensor_y, hit, distance))
 
-    def compute_omni(self):
-        """
-        Checks which beacons are in range of the robot's omnidirectional sensor 
-        Computes the observation vector based on omni-sensor readings
-        First applies trilateration to omni-sensor readings (detected beacon positions, distances, bearings) 
-        and then outputs the estimated robot pose according to this trilateration.
-        This estimated pose wil be used as the robot's "observation".
-        """
-        # Check which beacons are in range (detected)
-        detected_beacon_positions = [] 
-        detected_beacon_distances = []
-        detected_beacon_bearings = []
-        self.beacon_distances = [math.inf for _ in self.beacons]
-        robot_pos = np.array([self.spawn_x+self.robot_x, self.spawn_y+self.robot_y])
-        for j, (beacon_x, beacon_y) in enumerate(self.beacons):
-            # Use ACTUAL beacon location and ACTUAL robot location to get distance measure 
-            #  wand only later add noise: 
-            beacon_pos = np.array([beacon_x, beacon_y])
-            distance = np.linalg.norm(beacon_pos-robot_pos)
-            if distance < OMNI_RANGE:
-                detected_beacon_positions.append((beacon_x, beacon_y))
-                # Distance
-                self.beacon_distances[j] = distance 
-                detected_beacon_distances.append(distance)
-                # Bearing 
-                #  Robot doesn't actually know true self.robot_angle, but it knows the 
-                #  relative angle between its orientation and a beacon that is perceives -> "bearing" 
-                bearing = np.atan2(beacon_y-(self.spawn_y+self.robot_y), beacon_x-(self.spawn_x+self.robot_x))-self.robot_angle 
-                # Wrap into interval [0, 2π]:
-                bearing %= 2*pi 
-                self.beacon_bearings[j] = bearing 
-                detected_beacon_bearings.append(bearing)
-        # Compute "observation" (trilaterated robot position in absolute coordinates) 
-        self.observation = None 
-        # Trilateration
-        trilateration = trilaterate(detected_beacon_positions, detected_beacon_distances, detected_beacon_bearings) 
-        if trilateration:
-            est_x, est_y, est_angle = trilateration 
-            est_x = int(est_x.item()) 
-            est_y = int(est_y.item()) 
-            est_angle = est_angle.item() 
-            # Add sensor noise (using matrix Q) 
-            noise_x, noise_y, noise_angle = np.random.multivariate_normal(np.zeros(3), Q, size=1)[0]
-            est_x += noise_x 
-            est_y += noise_y 
-            est_angle += noise_angle 
-            # Save this as the observation 
-            self.observation = np.array([est_x, est_y, est_angle])
+    def compute_observation(self):
+        # TODO
+        observation = None 
+        return observation 
 
     # Kalman filter ----------------------------------------------------------------------------------------------
 
@@ -399,8 +267,8 @@ class Environment:
         Updates the belief using the Kalman filter 
         Parameter 'action' must be a tuple containing (v_l, v_r) 
         """
-        mean = self.belief_mean 
-        cov = self.belief_cov 
+        mean = self.belief_mean
+        cov = np.diag(self.belief_var)
 
         # Motion update ("Prediction")
         #  Simple model of how model moves given the action without 
@@ -411,7 +279,7 @@ class Environment:
         # Believed orientation:
         angle = mean[2]
         # u vector: action (we're using linear velocity, angular velocity here)
-        u = np.array([v_linear, v_angular]) 
+        u = np.array([v_linear, v_angular])  
         # A matrix (effect of environment on next state)
         #  Assume environment has no effect -> use identity matrix 
         #  So we can just leave it 
@@ -423,43 +291,33 @@ class Environment:
         ])
         # Update mean 
         mean = mean + B.dot(u) 
-        # Make sure angle stays in range [0, 2π]:
-        mean[2] %= 2*pi 
+        # Make sure angle stays in range [-2π, 2π]:
+        mean[2] %= 2*pi  
         # Update covariance (belief_var)
         #  Actually just the diagonal of the covariance matrix, as we assume independence, 
         #  i.e. just the variances 
-        
-        print()
-        print("motion update:")
         cov = cov + R 
-        print(cov)
-
+        
         # Sensor update ("Correction")
         # We can only trilaterate if there are at least 3 points (2 points with angle), 
         #  so if we can't trilaterate, we can't do the correction step? 
-        # """
-        if self.observation is not None:
+        '''
+        observation = self.compute_observation() 
+        if observation is not None:
+            # We set C to identity matrix, so equations simplify to this: 
             # Kalman gain
             K = cov @ np.linalg.inv(cov + Q)
-
             # Updated state estimate
-            mean = mean + K @ (self.observation - mean)
+            mean = mean + K @ (observation - mean)
             # Updated covariance estimate
             I = np.eye(3)
-            print()
-            print("sensor update:")
-            print("<before>")
-            print(cov)
-            print("</before>")
             cov = (I - K) @ cov
-            print("<after>")
-            print(cov)
-            print("</after>")
-        # """
+        '''
 
         # Set belief to the result of the Kalman filter 
-        self.belief_mean = mean
-        self.belief_cov = cov
+        self.belief_mean = mean 
+        self.belief_var = cov.diagonal()  # turn diagonal back into vector 
+        # print(self.belief_var)
 
         # Append believed pose to belief trajectory
         self.belief_trajectory.append(self.belief_mean[:2])
@@ -497,29 +355,6 @@ class Environment:
             return 
         for obs in self.obstacles: 
             pygame.draw.rect(screen, OBSTACLE_COLOR, obs) 
-    
-    def draw_beacons(self):
-        if not beacon_visible:
-            return 
-        for i, ((beacon_x, beacon_y), distance) in enumerate(zip(self.beacons, self.beacon_distances)):
-            color = (0, 0, 0)
-            if distance < math.inf:
-                color = ACTIVE_BEACON_COLOR
-                # Draw circle around beacon with radius = distance to robot 
-                #  Since we know this is the distance between the robot and the beacon, the robot 
-                #  must be somewhere on that circle (or close to it, due to noise)
-                # '''
-                pygame.draw.circle(screen, color, (beacon_x, beacon_y), distance, 1)
-                # '''
-            else:
-                color = PASSIVE_BEACON_COLOR
-            pygame.draw.circle(screen, color, (beacon_x, beacon_y), 3)
-            '''
-            # Draw beacon id 
-            beacon_text = font.render(str(i), True, color)
-            beacon_text_rect = beacon_text.get_rect(center=(beacon_x, beacon_y))
-            screen.blit(beacon_text, beacon_text_rect)
-            '''
 
     def draw_robot(self):
         # Draw trajectory (past positions)
@@ -528,52 +363,24 @@ class Environment:
             pygame.draw.lines(screen, (90, 30, 30), False, points, 3)
         # Get robot's current (absolute) position
         x, y = self.spawn_x + self.robot_x, self.spawn_y + self.robot_y 
+        # Draw sensors 
         if robot_info_visible:
-            '''
-            # Draw sensors
             for sensor_x, sensor_y, hit, _ in self.sensors:
                 color = SENSOR_HIT_COLOR if hit else SENSOR_COLOR
                 pygame.draw.line(screen, color, (x, y), (self.spawn_x+sensor_x, self.spawn_y+sensor_y), 2)
                 # pygame.draw.circle(screen, color, (self.spawn_x+sensor_x, self.spawn_y+sensor_y), 3)
-            '''
-            # Draw omnidirectional sensor (circle around robot indicating OMNI_RANGE)
-            # '''
-            pygame.draw.circle(screen, ROBOT_COLOR, (x, y), OMNI_RANGE, 2)
-            # '''
-            # Draw lines from robot to detected beacons
-            for (beacon_x, beacon_y), distance, bearing in zip(self.beacons, self.beacon_distances, self.beacon_bearings):
-                if distance < math.inf:
-                    pygame.draw.line(screen, ACTIVE_BEACON_COLOR, (x, y), (beacon_x, beacon_y), 2)
-                    '''
-                    # Draw beacon distances
-                    #  I'm dividing by SENSOR_STEP_SIZE so we get the same units as the sensor distances 
-                    distance_text = font.render(str(int(distance//SENSOR_STEP_SIZE)), True, (255, 255, 255))
-                    distance_text_rect = distance_text.get_rect(center=(beacon_x+10, beacon_y+10))
-                    screen.blit(distance_text, distance_text_rect)
-                    '''
-                    '''
-                    # Draw beacon bearings
-                    bearing_text = font.render(str(int(np.rad2deg(2*pi-bearing)))+"°", True, (255, 255, 255))
-                    bearing_text_rect = bearing_text.get_rect(center=(beacon_x+10, beacon_y+10))
-                    screen.blit(bearing_text, bearing_text_rect)
-                    '''
         # Draw the robot body (disk)
         pygame.draw.circle(screen, ROBOT_COLOR, (x, y), ROBOT_RADIUS)
         # Draw the direction line (heading)
         heading_x = x + ROBOT_RADIUS * math.cos(self.robot_angle)
         heading_y = y + ROBOT_RADIUS * math.sin(self.robot_angle)
         pygame.draw.line(screen, (0, 0, 0), (x, y), (heading_x, heading_y), 3)
-        # Draw estimated position according to trilateration 
-        if self.observation is not None:
-            est_x, est_y, _ = self.observation 
-            pygame.draw.circle(screen, (255, 255, 255), (est_x, est_y), 3)
-        '''
         # Draw motor speed text inside the robot body
         if robot_info_visible:
             # vel_text = font.render(f"[{self.v_l}, {self.v_r}]", True, (255, 255, 255))
-            # screen.blit(vel_text, (x-11, y-6))  
+            # screen.blit(vel_text, (x-11, y-6)) 
+            # Draw sensor distance values around the robot (text)
             for i, (_, _, hit, distance) in enumerate(self.sensors):
-                # Draw sensor distance values around the robot (text)
                 sensor_angle = self.robot_angle + i * SENSOR_ANGLE_STEP
                 text_x = x + (ROBOT_RADIUS + 20) * math.cos(sensor_angle)  # Position outside the robot
                 text_y = y + (ROBOT_RADIUS + 20) * math.sin(sensor_angle)  
@@ -582,33 +389,22 @@ class Environment:
                     distance_text = font.render(str(int(distance)), True, (255, 255, 255) if hit else (100, 100, 100))
                     text_rect = distance_text.get_rect(center=(text_x, text_y))
                     screen.blit(distance_text, text_rect)
-        '''
 
     def draw_belief(self):
         # Draw trajectory (i.e. past believed positions)
         if trajectory_visible:
             pygame.draw.lines(screen, (30, 30, 90), False, self.belief_trajectory, 3)
         # Get current believed position (mean and variance)
-        mean_x, mean_y, mean_angle = self.belief_mean 
-        cov = self.belief_cov 
-        
-        # Draw covariance 
-        # (assuming covariance is always a diagonal matrix -> eigenvectors are [1, 0], [0, 1]
-        #  and eigenvalues are diagonal entries)
-        n_std = 2  # (n_std=1, conf=68%), (n_std=2, conf=95%)
-        eigvals = cov.diagonal()[:2]
-        ellipse_width, ellipse_height = 2 * n_std * np.sqrt(eigvals)
-        print()
-        print("ellipse:")
-        print((ellipse_width.round(2).item(), ellipse_height.round(2).item()))
-        # Draw ellipse (position uncertainty)
-        ellipse = pygame.Rect(mean_x-ellipse_width/2, mean_y-ellipse_height/2, ellipse_width, ellipse_height)
+        mean_x, mean_y, mean_angle = self.belief_mean
+        '''
+        # TODO:
+        var_x, var_y, var_angle = self.belief_var 
+        # Draw covariance
+        # pygame.draw.circle(screen, (30, 30, 200), (mean_x, mean_y), (var_x+var_y)/2, 2)
+        ellipse = pygame.Rect(mean_x - var_x/2, mean_y - var_y/2, var_x, var_y)
         # pygame.draw.rect(screen, (30, 30, 200), ellipse, 2) 
         pygame.draw.ellipse(screen, (30, 30, 200), ellipse, 2)
-        # Draw orientation uncertainty (???)
-        # angle = np.arctan2(*vecs[:,0][::-1])  # angle of major axis (in radians)
-        # TODO
-
+        '''
         # Draw the robot body (disk) at (mean) believed location 
         pygame.draw.circle(screen, (50, 50, 255), (mean_x, mean_y), ROBOT_RADIUS)
         # Draw the direction line (heading) of (mean) believed orientation 
@@ -644,7 +440,6 @@ class Environment:
     def render(self):
         screen.fill(BACKGROUND_COLOR)
         self.draw_obstacles()
-        self.draw_beacons()
         self.draw_belief()
         self.draw_robot()
         pygame.display.flip()
@@ -673,31 +468,22 @@ if __name__ == "__main__":
             if event.type == pygame.QUIT:
                 running = False 
             elif event.type == pygame.KEYDOWN:
+                flag_changed = True
                 match event.key: 
                     case pygame.K_ESCAPE: 
                         running = False 
                     case pygame.K_s if (mods & (pygame.KMOD_META | pygame.KMOD_CTRL)):
                         # CMD + "S" key saves run so far as mp4 file 
                         env.to_video()
-                    case pygame.K_r:
-                        # "R" resets the environment 
-                        env.reset()
                     case pygame.K_i:
                         # "I" key toggles robot info visibility 
                         robot_info_visible = not robot_info_visible
-                        flag_changed = True
                     case pygame.K_o:
                         # "O" key toggles obstacle visibility
                         obstacles_visible = not obstacles_visible
-                        flag_changed = True
                     case pygame.K_t:
                         # "T" key toggles trajectory visibility
                         trajectory_visible = not trajectory_visible
-                        flag_changed = True
-                    case pygame.K_b:
-                        # "B" key toggles beacon visibility 
-                        beacon_visible = not beacon_visible
-                        flag_changed = True
         
         # Robot controls 
         v_l, v_r = 0, 0
@@ -708,6 +494,7 @@ if __name__ == "__main__":
         if keys[pygame.K_UP]:  
             # UP arrow key controls the right motor
             v_r = 1
+
         # Move the robot according to (v_l, v_r)
         env.move((v_l, v_r))
     
