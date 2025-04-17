@@ -242,67 +242,62 @@ class Environment:
         self.sensors = sensors 
 
     def compute_observation(self):
-        # "observation" = triangulated/trilatered absolute robot position from sensor data 
-        observation = None 
-        # TODO
-        #
-        #
-        #
-        # TODO: add sensor noise (I assume we have to use matrix Q here?)
-        # 
-        #
-        #
+        """
+        Computes the robot's observation (absolute position) based on sensor data.
+        Adds noise to simulate real-world sensor inaccuracies.
+        """
+        if not self.sensors:
+            return None
+
+        # Use the robot's current position as a noisy observation
+        noisy_x = self.spawn_x + self.robot_x + np.random.normal(0, 0.2)
+        noisy_y = self.spawn_y + self.robot_y + np.random.normal(0, 0.2)
+        noisy_angle = self.robot_angle + np.random.normal(0, 0.1)
+
+        observation = np.array([noisy_x, noisy_y, noisy_angle])
         return observation
 
     # Kalman filter ----------------------------------------------------------------------------------------------
 
     def update_belief(self, action): 
         """
-        Updates the belief using the Kalman filter 
-        Parameter 'action' must be a tuple containing (v_l, v_r) 
+        Updates the belief using the Kalman filter.
+        Parameter 'action' must be a tuple containing (v_l, v_r).
         """
         # Motion update ("Prediction")
-        #  Simple model of how model moves given the action without 
-        #  any consideration of obstacles
         v_l, v_r = action 
         v_linear = MOVE_SPEED * (v_l + v_r) / 2  # Average speed of both motors
         v_angular = ROTATE_SPEED * (v_r - v_l) / ROBOT_RADIUS  # Differential rotation
-        # Believed orientation:
         angle = self.belief_mean[2]
-        # u vector: action (we're using linear velocity, angular velocity here)
-        u = np.array([v_linear, v_angular])  
-        # A matrix (effect of environment on next state)
-        #  Assume environment has no effect -> use identity matrix 
-        #  So we can just leave it 
-        # B matrix (effect of taking action u on next state)
+        u = np.array([v_linear, v_angular])  # Action vector
         B = np.array([
             [np.cos(angle), 0],
             [np.sin(angle), 0],
             [0,             1]
         ])
-        # Update mean 
-        self.belief_mean = self.belief_mean + B.dot(u) 
-        # Make sure angle stays in range [-2π, 2π]:
-        self.belief_mean[2] %= 2*pi  
-        # Update covariance (belief_var)
-        #  Actually just the diagonal of the covariance matrix, as we assume independence, 
-        #  i.e. just the variances 
-        belief_cov = np.diag(self.belief_var) 
-        self.belief_var = (belief_cov + R).diagonal()  # turn diagonal back into vector 
-        print(self.belief_var)
-        
+        # Update belief mean
+        self.belief_mean = self.belief_mean + B.dot(u)
+        self.belief_mean[2] %= 2 * pi  # Keep angle in range [-2π, 2π]
+        # Update belief covariance
+        belief_cov = np.diag(self.belief_var)
+        belief_cov = belief_cov + R  # Add motion noise
+        self.belief_var = belief_cov.diagonal()
+
         # Sensor update ("Correction")
-        # We got self.sensors with entries (sx, sy, hit, distance) 
-        # using triangulation or trilateration 
-        observation = self.compute_observation()
-        # TODO
-        # TODO: might be easier, if we create an occupancy bitmap first and then use this as the map?
-        #  Inside the occupancy bitmap, we could also limit ourselves to a small window around the 
-        #  mean believed position according to the motion model, 
-        #  and the size of the window could depend on the variance 
-        # 
-        # 
-        # 
+        observation = self.compute_observation()  # Get observation from sensors
+        if observation is not None:
+            # Observation model: H maps state to observation space
+            H = np.eye(3)  # Assuming direct observation of x, y, and angle
+            # Sensor noise covariance matrix
+            Q = np.diag([0.2, 0.2, 0.1])  # Adjust based on sensor accuracy
+            # Kalman gain
+            S = H.dot(belief_cov).dot(H.T) + Q  # Innovation covariance
+            K = belief_cov.dot(H.T).dot(np.linalg.inv(S))  # Kalman gain
+            # Update belief mean and covariance
+            innovation = observation - H.dot(self.belief_mean)
+            self.belief_mean = self.belief_mean + K.dot(innovation)
+            belief_cov = (np.eye(3) - K.dot(H)).dot(belief_cov)
+            self.belief_var = belief_cov.diagonal()
 
         # Append believed pose to belief trajectory
         self.belief_trajectory.append(self.belief_mean[:2])
