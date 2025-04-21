@@ -583,6 +583,9 @@ class Environment:
                     text_rect = distance_text.get_rect(center=(text_x, text_y))
                     screen.blit(distance_text, text_rect)
         '''
+# TODO: draw ellipse for covariance matrix
+#  if necessary: debug covariance computation
+#  (e.g. covariance matrix is not diagonal, but should be?) if it is diah=gnonal we can do width and H but if it is not we have to add extra step, lets assume that it is diagonal and work on this 
 
     def draw_belief(self):
         # Draw trajectory (i.e. past believed positions)
@@ -596,18 +599,36 @@ class Environment:
         # (assuming covariance is always a diagonal matrix -> eigenvectors are [1, 0], [0, 1]
         #  and eigenvalues are diagonal entries)
         n_std = 2  # (n_std=1, conf=68%), (n_std=2, conf=95%)
-        eigvals = cov.diagonal()[:2]
+
+        # Extract 2D covariance matrix for position
+        cov_2d = cov[:2, :2]
+
+        # Eigen decomposition
+        eigvals, eigvecs = np.linalg.eigh(cov_2d)
+
+        # Sort eigenvalues and vectors
+        order = eigvals.argsort()[::-1]
+        eigvals = eigvals[order]
+        eigvecs = eigvecs[:, order]
+
+        # Compute ellipse parameters
         ellipse_width, ellipse_height = 2 * n_std * np.sqrt(eigvals)
+        # Compute angle of rotation
+        angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
+
         print()
         print("ellipse:")
         print((ellipse_width.round(2).item(), ellipse_height.round(2).item()))
         # Draw ellipse (position uncertainty)
         ellipse = pygame.Rect(mean_x-ellipse_width/2, mean_y-ellipse_height/2, ellipse_width, ellipse_height)
-        # pygame.draw.rect(screen, (30, 30, 200), ellipse, 2) 
-        pygame.draw.ellipse(screen, (30, 30, 200), ellipse, 2)
-        # Draw orientation uncertainty (???)
-        # angle = np.arctan2(*vecs[:,0][::-1])  # angle of major axis (in radians)
-        # TODO
+        # Create surface for rotated ellipse
+        ellipse_surf = pygame.Surface((ellipse_width, ellipse_height), pygame.SRCALPHA)
+        pygame.draw.ellipse(ellipse_surf, (30, 30, 200, 100), ellipse_surf.get_rect(), 2)
+
+        # Rotate and blit
+        rotated_ellipse = pygame.transform.rotate(ellipse_surf, -angle)
+        rect = rotated_ellipse.get_rect(center=(mean_x, mean_y))
+        screen.blit(rotated_ellipse, rect.topleft)
 
         # Draw the robot body (disk) at (mean) believed location 
         pygame.draw.circle(screen, (50, 50, 255), (mean_x, mean_y), ROBOT_RADIUS)
