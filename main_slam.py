@@ -1,12 +1,12 @@
-import os 
+import os
 import pygame
-import math 
-from math import pi 
+import math
+from math import pi
 import numpy as np
-import random 
-import datetime as dt 
-from PIL import Image 
-import imageio.v2 as imageio 
+import random
+import datetime as dt
+from PIL import Image
+import imageio.v2 as imageio
 from trilaterate import trilaterate
 
 
@@ -55,24 +55,163 @@ R = np.diag([1e-6, 1e-6, 1e-6])  # motion-noise covariance
 Q = np.diag([1e-6, 1e-6, 1e-6])  # sensor-noise covariance
 
 
+
+# === EKF-SLAM Helpers ===
+def initialize_slam_state(robot_pose, beacon_positions, robot_cov, landmark_cov):
+    M = len(beacon_positions)
+    dim = 3 + 2*M
+    X = np.zeros(dim)
+    X[0:3] = robot_pose
+    for i, pos in enumerate(beacon_positions):
+        X[3+2*i:3+2*i+2] = pos
+    P = np.zeros((dim, dim))
+    P[0:3, 0:3] = robot_cov
+    for i in range(M):
+        idx = 3 + 2*i
+        P[idx:idx+2, idx:idx+2] = landmark_cov
+    return X, P
+
+def motion_jacobian(robot_state, u):
+    x, y, theta = robot_state
+    v_l, v_r = u
+    v = (v_l + v_r) / 2
+    F = np.eye(3)
+    F[0,2] = -v * math.sin(theta)
+    F[1,2] =  v * math.cos(theta)
+    return F
+
+# === EKF-SLAM Prediction ===
+# Predict robot motion in EKF-SLAM
+# X: state vector (x, y, theta, lx1, ly1, ..., lxM, lyM)
+# P: covariance matrix
+# u: control input (v_l, v_r)
+# R: process noise covariance
+# Returns: predicted state and covariance
+def predict_slam(X, P, u, R):
+    # Predict robot motion in EKF-SLAM
+    x, y, theta = X[0:3]
+    v_l, v_r = u
+    v = (v_l + v_r) / 2
+    omega = (v_r - v_l)
+    # motion update
+    X_pred = X.copy()
+    X_pred[0] += v * math.cos(theta)
+    X_pred[1] += v * math.sin(theta)
+    X_pred[2] = (theta + omega) % (2*pi)
+    # Jacobian
+    Fx = motion_jacobian(X[0:3], u)
+    M = (len(X)-3)//2
+    F = np.eye(len(X))
+    F[0:3,0:3] = Fx
+    # process noise
+    Q_full = np.zeros_like(P)
+    Q_full[0:3,0:3] = R
+    # covariance
+    P_pred = F @ P @ F.T + Q_full
+    return X_pred, P_pred
+
+# === EKF-SLAM Measurement Update ===
+def meas_pred(X, i):
+    x, y, theta = X[0:3]
+    idx = 3+2*i
+    # landmark position
+    lx, ly = X[idx], X[idx+1]
+    dx, dy = lx - x, ly - y
+    r = math.hypot(dx, dy)
+    phi = (math.atan2(dy, dx) - theta) % (2*pi)
+    return np.array([r, phi])
+
+# Jacobian of the measurement model
+def meas_jac(X, i):
+    x, y, theta = X[0:3]
+    idx = 3+2*i
+    lx, ly = X[idx], X[idx+1]
+    dx, dy = lx - x, ly - y
+    q = dx*dx + dy*dy
+    sqrt_q = math.sqrt(q)
+    H = np.zeros((2, len(X)))
+    # dr/dx, dr/dy
+    H[0,0] = -dx/sqrt_q; H[0,1] = -dy/sqrt_q
+    # dr/dlx, dr/dly
+    H[0,idx] = dx/sqrt_q; H[0,idx+1] = dy/sqrt_q
+    # dphi/dx, dphi/dy, dphi/dtheta
+    H[1,0] = dy/q; H[1,1] = -dx/q; H[1,2] = -1
+    # dphi/dlx, dphi/dly
+    H[1,idx]   = -dy/q; H[1,idx+1] = dx/q
+    return H
+
+def ekf_slam_correction(X, P, measurements, Q):
+    # measurements: list of (i, [r,phi])
+    zs, zhs, Hs = [], [], []
+    # loop through all measurements
+    for i, z in measurements:
+        # z is the measurement vector for landmark i
+        zs.append(z)
+        # zhat is the predicted measurement vector for landmark i
+        zhs.append(meas_pred(X, i))
+        Hs.append(meas_jac(X, i))
+    z = np.hstack(zs)
+    zhat = np.hstack(zhs)
+    H = np.vstack(Hs)
+    R_big = np.kron(np.eye(len(measurements)), Q)
+    S = H @ P @ H.T + R_big
+    K = P @ H.T @ np.linalg.inv(S)
+    X_new = X + K @ (z - zhat)
+    P_new = (np.eye(len(X)) - K @ H) @ P
+    return X_new, P_new
+
 class Environment:
 
     # Initialization ---------------------------------------------------------------------------------------------
-    
+        
     def __init__(self):
+        pygame.init()
         self.reset()
     
     def reset(self):
-        self.timestep = 0 
+        # Reset counters & visuals
+        self.timestep = 0
+        self.frames = []
+        self.prev_frame = None
+
+        # Build the true map & robot spawn
         self.initialize_map()
         self.initialize_beacons()
         self.initialize_grid()
         self.initialize_robot()
-        self.initialize_belief()
-        if SCREEN_CAPTURE:
-            self.prev_frame = None 
-            self.frames = []
-        
+
+        # Initialize SLAM state
+        robot_pose   = [self.spawn_x, self.spawn_y, self.robot_angle]
+        # Landmark positions are the beacons' positions
+        # If the red X’s are updating too slowly toward the true landmark positions,
+        # try reducing the initial landmark covariance (e.g., landmark_cov = np.diag([1e2, 1e2]))
+        # or increasing the measurement noise covariance Q
+        # 1e3 is a good value for the initial landmark covariance.
+        landmark_cov = np.diag([1e3, 1e3])
+        self.X, self.P = initialize_slam_state(robot_pose, self.beacons, V, landmark_cov)
+
+        # Now set up your belief variables
+        # At this point, self.belief_mean isn’t defined, so define it from X
+        self.belief_mean       = self.X[0:3].copy()
+        self.belief_cov        = self.P[0:3, 0:3].copy()
+        self.belief_trajectory = [ self.belief_mean[:2].copy() ]
+
+    def update_belief(self, action):
+        # predict
+        self.X, self.P = predict_slam(self.X, self.P, action, R)
+        # build measurements from omni-sensor
+        meas = []
+        for j, dist in enumerate(self.beacon_distances):
+            if dist < math.inf:
+                meas.append((j, np.array([dist, self.beacon_bearings[j]])))
+        # correct
+        if meas:
+            self.X, self.P = ekf_slam_correction(self.X, self.P, meas, np.diag([1e-2,1e-2]))
+        # unpack robot pose
+        self.belief_mean = self.X[0:3]
+        # store belief trajectory
+        self.belief_trajectory.append(self.belief_mean[0:2])
+
     def initialize_map(self):
         """
         Generates a map with randomly placed blocks.
@@ -231,7 +370,10 @@ class Environment:
         global flag_changed
         self.compute_sensors()
         self.compute_omni()
-        self.compute_occupancy()
+        #  in pallarel to the robot's movement, compute the occupancy grid mapping and ekf_slam
+        # occupancy grid mapping 
+        self.compute_occupancy() 
+        # ekf_slam 
         self.update_belief(action) 
         if SCREEN_CAPTURE:
             self.save_frame()
@@ -470,62 +612,6 @@ class Environment:
                         self.detected_occupancy[j] = 0
 
     # Kalman filter ----------------------------------------------------------------------------------------------
-
-    def update_belief(self, action): 
-        """
-        Updates the belief using the Kalman filter 
-        Parameter 'action' must be a tuple containing (v_l, v_r) 
-        """
-        mean = self.belief_mean 
-        cov = self.belief_cov 
-
-        # Motion update ("Prediction")
-        #  Simple model of how model moves given the action without 
-        #  any consideration of obstacles
-        v_l, v_r = action 
-        v_linear = MOVE_SPEED * (v_l + v_r) / 2  # Average speed of both motors
-        v_angular = ROTATE_SPEED * (v_r - v_l) / ROBOT_RADIUS  # Differential rotation
-        # Believed orientation:
-        angle = mean[2]
-        # u vector: action (we're using linear velocity, angular velocity here)
-        u = np.array([v_linear, v_angular]) 
-        # A matrix (effect of environment on next state)
-        #  Assume environment has no effect -> use identity matrix 
-        #  So we can just leave it 
-        # B matrix (effect of taking action u on next state)
-        B = np.array([
-            [np.cos(angle), 0],
-            [np.sin(angle), 0],
-            [0,             1]
-        ])
-        # Update mean 
-        mean = mean + B.dot(u) 
-        # Make sure angle stays in range [0, 2π]:
-        mean[2] %= 2*pi 
-        # Update covariance (belief_var)
-        #  Actually just the diagonal of the covariance matrix, as we assume independence, 
-        #  i.e. just the variances 
-        cov = cov + R 
-
-        # Sensor update ("Correction")
-        # We can only trilaterate if there are at least 3 points (2 points with angle), 
-        #  so if we can't trilaterate, we can't do the correction step? 
-        if self.observation is not None:
-            # Kalman gain
-            K = cov @ np.linalg.inv(cov + Q)
-            # Updated state estimate
-            mean = mean + K @ (self.observation - mean)
-            # Updated covariance estimate
-            I = np.eye(3)
-            cov = (I - K) @ cov
-
-        # Set belief to the result of the Kalman filter 
-        self.belief_mean = mean
-        self.belief_cov = cov
-
-        # Append believed pose to belief trajectory
-        self.belief_trajectory.append(self.belief_mean[:2])
-
     # Helpers ----------------------------------------------------------------------------------------------------
     
     def is_colliding(self, xy=None):
@@ -688,34 +774,13 @@ class Environment:
         '''
 
     def draw_belief(self):
-        # Draw trajectory (i.e. past believed positions)
-        if trajectory_visible:
-            pygame.draw.lines(screen, (30, 30, 90), False, self.belief_trajectory, 3)
-        # Get current believed position (mean and variance)
-        mean_x, mean_y, mean_angle = self.belief_mean 
-        cov = self.belief_cov 
-        
-        # Draw covariance 
-        # (assuming covariance is always a diagonal matrix -> eigenvectors are [1, 0], [0, 1]
-        #  and eigenvalues are diagonal entries)
-        n_std = 2  # (n_std=1, conf=68%), (n_std=2, conf=95%)
-        eigvals = cov.diagonal()[:2]
-        ellipse_width, ellipse_height = 2 * n_std * np.sqrt(eigvals)
-        # print((ellipse_width.round(2).item(), ellipse_height.round(2).item()))
-        # Draw ellipse (position uncertainty)
-        ellipse = pygame.Rect(mean_x-ellipse_width/2, mean_y-ellipse_height/2, ellipse_width, ellipse_height)
-        # pygame.draw.rect(screen, (30, 30, 200), ellipse, 2) 
-        pygame.draw.ellipse(screen, (30, 30, 200), ellipse, 2)
-        # Draw orientation uncertainty (???)
-        # angle = np.arctan2(*vecs[:,0][::-1])  # angle of major axis (in radians)
-        # TODO
-
-        # Draw the robot body (disk) at (mean) believed location 
-        pygame.draw.circle(screen, (50, 50, 255), (mean_x, mean_y), ROBOT_RADIUS)
-        # Draw the direction line (heading) of (mean) believed orientation 
-        heading_x = mean_x + ROBOT_RADIUS * math.cos(mean_angle)
-        heading_y = mean_y + ROBOT_RADIUS * math.sin(mean_angle)
-        pygame.draw.line(screen, (0, 0, 0), (mean_x, mean_y), (heading_x, heading_y), 3)
+        mean_x, mean_y, _ = self.belief_mean
+        cov = self.belief_cov
+        # compute ellipse width & height from cov diagonal
+        n_std = 2
+        w, h = 2 * n_std * np.sqrt(cov[0,0]), 2 * n_std * np.sqrt(cov[1,1])
+        ellipse = pygame.Rect(mean_x - w/2, mean_y - h/2, w, h)
+        pygame.draw.ellipse(screen, (0, 0, 255), ellipse, 2)
 
     def save_frame(self): 
         frame_surface = pygame.display.get_surface().copy()
@@ -742,12 +807,24 @@ class Environment:
             for frame in self.frames[1:]:
                 writer.append_data(np.array(frame))
     
+    def draw_slam_landmarks(self):
+        # overlay EKF‐SLAM’s landmark estimates as red X’s
+        M = len(self.beacons)
+        for i in range(M):
+            ex, ey = self.X[3+2*i], self.X[3+2*i+1]
+            size = 4
+            # draw a red cross at (ex, ey)
+            pygame.draw.line(screen, (255, 0, 0), (ex-size, ey-size), (ex+size, ey+size), 2)
+            pygame.draw.line(screen, (255, 0, 0), (ex-size, ey+size), (ex+size, ey-size), 2)
+
+
     def render(self):
         screen.fill(BACKGROUND_COLOR)
         self.draw_grid()
         self.draw_obstacles()
         self.draw_beacons()
-        # self.draw_belief()
+        self.draw_belief()
+        self.draw_slam_landmarks()
         self.draw_robot()
         pygame.display.flip()
 
