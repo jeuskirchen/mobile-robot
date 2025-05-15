@@ -40,7 +40,7 @@ V = np.diag([1e-6, 1e-6, 1e-6])  # initial state-estimate covariance
 Q = np.diag([1e-6, 1e-6, 1e-6])  # sensor-noise covariance
 
 
-class Demo(Environment):
+class Demo(Evolution):
 
     # Initialization ---------------------------------------------------------------------------------------------
     
@@ -51,10 +51,8 @@ class Demo(Environment):
             self.initialize_beacons()
             self.initialize_target()
         self.initialize_robot()
-        '''
         self.initialize_belief()
         self.initialize_grid()
-        '''
         if SCREEN_CAPTURE and reset_screen_capture:
             self.prev_frame = None 
             self.frames = []
@@ -127,6 +125,16 @@ class Demo(Environment):
                 self.beacon_bearings.append(0)
         # '''
 
+    def initialize_belief(self):
+        # Belief is the robot's belief of its own pose in absolute terms! 
+        # Initialize belief at spawn point (local localization!) 
+        #  and set small variance.
+        #  For global localization, use random initial point and large variance.
+        self.belief_mean = np.array([self.spawn_x, self.spawn_y, self.robot_angle])
+        self.belief_cov = V 
+        # Initialize belief trajectory 
+        self.belief_trajectory = [self.belief_mean[:2]]
+
     # Step: transition to the next state -------------------------------------------------------------------------
     
     def step(self, action):
@@ -135,11 +143,9 @@ class Demo(Environment):
         """
         global flag_changed
         self.compute_sensors()
-        '''
         self.compute_omni()
         self.compute_occupancy()
         self.update_belief(action) 
-        '''
         if SCREEN_CAPTURE:
             self.save_frame()
         self.render()
@@ -147,9 +153,53 @@ class Demo(Environment):
         self.timestep += 1
         flag_changed = False 
     
+    # Sensors ----------------------------------------------------------------------------------------------------
+
+    def compute_omni(self):
+        """
+        Checks which beacons are in range of the robot's omnidirectional sensor 
+        Computes the observation vector based on omni-sensor readings
+        First applies trilateration to omni-sensor readings (detected beacon positions, distances, bearings) 
+        and then outputs the estimated robot pose according to this trilateration.
+        This estimated pose wil be used as the robot's "observation".
+        """
+        # Check which beacons are in range (detected)
+        detected_beacon_positions = [] 
+        detected_beacon_distances = []
+        detected_beacon_bearings = []
+        self.beacon_distances = [inf for _ in self.beacons]
+        robot_pos = np.array([self.spawn_x+self.robot_x, self.spawn_y+self.robot_y])
+        for j, (beacon_x, beacon_y) in enumerate(self.beacons):
+            # Use ACTUAL beacon location and ACTUAL robot location to get distance measure 
+            #  and only later add noise: 
+            beacon_pos = np.array([beacon_x, beacon_y])
+            distance = np.linalg.norm(beacon_pos-robot_pos)
+            if distance < OMNI_RANGE:
+                detected_beacon_positions.append((beacon_x, beacon_y))
+                # Distance
+                self.beacon_distances[j] = distance 
+                detected_beacon_distances.append(distance)
+                # Bearing 
+                #  Robot doesn't actually know true self.robot_angle, but it knows the 
+                #  relative angle between its orientation and a beacon that is perceives -> "bearing" 
+                bearing = np.atan2(beacon_y-(self.spawn_y+self.robot_y), beacon_x-(self.spawn_x+self.robot_x))-self.robot_angle 
+                # Wrap into interval [0, 2π]:
+                bearing %= 2*pi 
+                self.beacon_bearings[j] = bearing 
+                detected_beacon_bearings.append(bearing)
+        # Compute "observation" (trilaterated robot position in absolute coordinates) 
+        self.observation = None 
+        # Trilateration
+        trilateration = trilaterate(detected_beacon_positions, detected_beacon_distances, detected_beacon_bearings) 
+        if trilateration is not None:
+            # Add sensor noise (using matrix Q) 
+            noise = np.random.multivariate_normal(np.zeros(3), Q, size=1)[0]
+            trilateration += noise 
+            # Save this as the observation 
+            self.observation = trilateration 
+
     # Kalman filter ----------------------------------------------------------------------------------------------
 
-    '''
     def update_belief(self, action): 
         """
         Updates the belief using the Kalman filter 
@@ -204,7 +254,6 @@ class Demo(Environment):
 
         # Append believed pose to belief trajectory
         self.belief_trajectory.append(self.belief_mean[:2])
-    '''
 
     # Navigation -------------------------------------------------------------------------------------------------
 
@@ -263,7 +312,6 @@ class Demo(Environment):
             screen.blit(beacon_text, beacon_text_rect)
             '''
     
-    '''
     def draw_grid(self):
         if not grid_visible:
             return 
@@ -303,7 +351,6 @@ class Demo(Environment):
                     else:
                         # In range and NO occupancy is detected
                         pygame.draw.rect(screen, (255, 255, 0), (cell_x, cell_y, GRID_CELL_SIZE, GRID_CELL_SIZE), 1)
-    '''
 
     def draw_robot(self):
         # Draw trajectory (past positions)
@@ -372,7 +419,6 @@ class Demo(Environment):
                     screen.blit(distance_text, text_rect)
         # '''
 
-    '''
     def draw_belief(self):
         # Draw trajectory (i.e. past believed positions)
         if trajectory_visible:
@@ -402,12 +448,9 @@ class Demo(Environment):
         heading_x = mean_x + ROBOT_RADIUS * math.cos(mean_angle)
         heading_y = mean_y + ROBOT_RADIUS * math.sin(mean_angle)
         pygame.draw.line(screen, (0, 0, 0), (mean_x, mean_y), (heading_x, heading_y), 3)
-    '''
 
-    '''
     def draw_target(self):
         screen.blit(TARGET_IMAGE, (self.target_x-TARGET_IMAGE_SIZE/2, self.target_y-TARGET_IMAGE_SIZE/2))
-    '''
 
     def save_frame(self): 
         frame_surface = pygame.display.get_surface().copy()
@@ -436,15 +479,11 @@ class Demo(Environment):
     
     def render(self):
         screen.fill(BACKGROUND_COLOR)
-        '''
         self.draw_grid()
-        '''
         self.draw_obstacles()
         self.draw_beacons()
-        '''
-        self.draw_belief() 
+        # self.draw_belief() 
         self.draw_target()
-        '''
         self.draw_robot()
         pygame.display.flip()
 
@@ -458,12 +497,8 @@ if __name__ == "__main__":
     pygame.font.init()
     font = pygame.font.SysFont("Calibri", 12)
     font_small = pygame.font.SysFont("Calibri", 8)
-    '''
     TARGET_IMAGE = pygame.image.load("resources/target.png").convert_alpha() 
     TARGET_IMAGE = pygame.transform.scale(TARGET_IMAGE, (TARGET_IMAGE_SIZE, TARGET_IMAGE_SIZE)) 
-    PSEUDO_TARGET_IMAGE = pygame.image.load("resources/pseudo_target.png").convert_alpha() 
-    PSEUDO_TARGET_IMAGE = pygame.transform.scale(PSEUDO_TARGET_IMAGE, (TARGET_IMAGE_SIZE, TARGET_IMAGE_SIZE)) 
-    '''
     
     # Environment 
     env = Demo() 

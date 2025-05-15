@@ -19,7 +19,7 @@ NUM_BEACONS = 100  # 100
 SCREEN_SIZE = NUM_CELLS*CELL_SIZE 
 SCREEN_CAPTURE = True 
 # Predicted map 
-NUM_GRID_CELLS = 20  # number of "grid cells" along each axis
+NUM_GRID_CELLS = 10  # number of "grid cells" along each axis
 assert SCREEN_SIZE % NUM_GRID_CELLS == 0, "SCREEN_SIZE must be divisible by NUM_GRID_CELLS"
 GRID_CELL_SIZE = SCREEN_SIZE//NUM_GRID_CELLS
 # Colors

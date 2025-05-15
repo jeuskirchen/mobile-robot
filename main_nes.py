@@ -17,7 +17,7 @@ OBSTACLE_DENSITY = 0.2  # 0.2
 # Screen 
 SCREEN_SIZE = NUM_CELLS*CELL_SIZE 
 # Predicted map 
-NUM_GRID_CELLS = NUM_CELLS  # number of "grid cells" along each axis, e.g. for occupancy grid 
+NUM_GRID_CELLS = 10  # number of "grid cells" along each axis, e.g. for occupancy grid 
 assert SCREEN_SIZE % NUM_GRID_CELLS == 0, "SCREEN_SIZE must be divisible by NUM_GRID_CELLS"
 GRID_CELL_SIZE = SCREEN_SIZE//NUM_GRID_CELLS
 # Robot
@@ -29,20 +29,18 @@ NUM_SENSORS = 8
 SENSOR_RANGE = 100 
 SENSOR_ANGLE_STEP = 2*pi/NUM_SENSORS
 SENSOR_STEP_SIZE = 10  # 4  # ideally, SENSOR_RANGE divisible by it 
-'''
 OMNI_RANGE = SENSOR_RANGE 
 OCCUPANCY_ERROR = 0.001  # 0.01, 0.001
 OCCUPANCY_LOG_ODDS = np.log((1-OCCUPANCY_ERROR)/OCCUPANCY_ERROR)  # log-odds of occupancy
-'''
 # Policy 
 ACTION_FREQUENCY = 1/4  # how often to call the policy to take an action 
 # Evolution 
-NUM_GENERATIONS = 1000
+NUM_GENERATIONS = 1000 
 NUM_OFFSPRING = 24  # λ
 assert NUM_OFFSPRING % 2 == 0, "NUM_OFFSPRING must be divisible by 2"
-NUM_EVAL_EPISODES = 10
-EPISODE_LENGTH = 2000
-NUM_HIDDEN_UNITS = 4 
+NUM_EVAL_EPISODES = 8  # 10
+EPISODE_LENGTH = 1800  # 2000
+NUM_HIDDEN_UNITS = 4  # 4 
 NUM_OUTPUTS = 1  # control outputs
 # NUM_TIMESTEPS_PER_EPISODE = 200
 LR_MEAN = 0.2  # 0.1, 0.05
@@ -54,7 +52,7 @@ Q = np.diag([1e-6, 1e-6, 1e-6])  # sensor-noise covariance
 '''
 
 
-class Environment:
+class Evolution:
 
     # Initialization ---------------------------------------------------------------------------------------------
     
@@ -67,14 +65,12 @@ class Environment:
         self.timestep = 0 
         if reset_map:
             self.initialize_map()
-            '''
             self.initialize_target()
-            '''
         self.initialize_robot()
         '''
         self.initialize_belief()
-        self.initialize_grid()
         '''
+        self.initialize_grid()
 
     def initialize_id(self):
         past_ids = [int(f[:f.index("_")]) for f in os.listdir("history") 
@@ -150,7 +146,7 @@ class Environment:
         self.collision_counter = 0
         self.distance_traveled = 0 
     
-    '''    
+    '''
     def initialize_belief(self):
         # Belief is the robot's belief of its own pose in absolute terms! 
         # Initialize belief at spawn point (local localization!) 
@@ -162,7 +158,6 @@ class Environment:
         self.belief_trajectory = [self.belief_mean[:2]]
     '''
 
-    '''
     def initialize_grid(self):
         """
         """
@@ -174,18 +169,20 @@ class Environment:
             for j, cell_y in enumerate(range(0, SCREEN_SIZE, GRID_CELL_SIZE)):
                 cell_center_x, cell_center_y = cell_x+GRID_CELL_SIZE//2, cell_y+GRID_CELL_SIZE//2  # grid cell center coordinates
                 self.grid[i,j] = (cell_center_x, cell_center_y)
-    '''
 
-    '''
     def initialize_target(self):
-        # Random cell in NUM_CELLS x NUM_CELLS grid that is not occupied by an obstacle
-        free_cells = np.argwhere(1-self.obstacle_grid)
+        obstacle_grid = self.obstacle_grid.copy()
+        # Let's block the center region so the target is somewhere further away from the center 
+        center = NUM_CELLS//2 
+        halfway = center//2 
+        obstacle_grid[center-halfway:center+halfway,center-halfway:center+halfway] = 1 
+        # Random cell in NUM_CELLS x NUM_CELLS grid that is not occupied by an obstacle 
+        free_cells = np.argwhere(1-obstacle_grid)
         idx = np.random.randint(len(free_cells))
         target_i, target_j = free_cells[idx]
         # Get coordinates of cell center and save as target_x, target_y
         self.target_x = target_i*CELL_SIZE + CELL_SIZE//2
         self.target_y = target_j*CELL_SIZE + CELL_SIZE//2
-    '''
 
     def initialize_evolution(self):
         self.current_generation = 0
@@ -208,8 +205,8 @@ class Environment:
         self.compute_sensors()
         '''
         self.compute_omni()
-        self.compute_occupancy()
         '''
+        self.compute_occupancy()
         self.timestep += 1
     
     # Motion -----------------------------------------------------------------------------------------------------
@@ -354,50 +351,6 @@ class Environment:
             #  Otherwise, the robot would know its exact position from the sensor readings!
             self.sensors.append((sensor_x, sensor_y, hit, distance))
 
-    '''
-    def compute_omni(self):
-        """
-        Checks which beacons are in range of the robot's omnidirectional sensor 
-        Computes the observation vector based on omni-sensor readings
-        First applies trilateration to omni-sensor readings (detected beacon positions, distances, bearings) 
-        and then outputs the estimated robot pose according to this trilateration.
-        This estimated pose wil be used as the robot's "observation".
-        """
-        # Check which beacons are in range (detected)
-        detected_beacon_positions = [] 
-        detected_beacon_distances = []
-        detected_beacon_bearings = []
-        self.beacon_distances = [inf for _ in self.beacons]
-        robot_pos = np.array([self.spawn_x+self.robot_x, self.spawn_y+self.robot_y])
-        for j, (beacon_x, beacon_y) in enumerate(self.beacons):
-            # Use ACTUAL beacon location and ACTUAL robot location to get distance measure 
-            #  and only later add noise: 
-            beacon_pos = np.array([beacon_x, beacon_y])
-            distance = np.linalg.norm(beacon_pos-robot_pos)
-            if distance < OMNI_RANGE:
-                detected_beacon_positions.append((beacon_x, beacon_y))
-                # Distance
-                self.beacon_distances[j] = distance 
-                detected_beacon_distances.append(distance)
-                # Bearing 
-                #  Robot doesn't actually know true self.robot_angle, but it knows the 
-                #  relative angle between its orientation and a beacon that is perceives -> "bearing" 
-                bearing = np.atan2(beacon_y-(self.spawn_y+self.robot_y), beacon_x-(self.spawn_x+self.robot_x))-self.robot_angle 
-                # Wrap into interval [0, 2π]:
-                bearing %= 2*pi 
-                self.beacon_bearings[j] = bearing 
-                detected_beacon_bearings.append(bearing)
-        # Compute "observation" (trilaterated robot position in absolute coordinates) 
-        self.observation = None 
-        # Trilateration
-        trilateration = trilaterate(detected_beacon_positions, detected_beacon_distances, detected_beacon_bearings) 
-        if trilateration is not None:
-            # Add sensor noise (using matrix Q) 
-            noise = np.random.multivariate_normal(np.zeros(3), Q, size=1)[0]
-            trilateration += noise 
-            # Save this as the observation 
-            self.observation = trilateration 
-
     def compute_occupancy(self):
         """
         Checks which grid cells are in range of the robot's omnidirectional sensor 
@@ -465,8 +418,7 @@ class Environment:
                         else:
                             self.occupancy[i,j] -= OCCUPANCY_LOG_ODDS
                             self.detected_occupancy[i,j] = 0
-    '''
-                            
+    
     # Navigation -------------------------------------------------------------------------------------------------
     
     def load_weights(self, evol_id=None):
@@ -500,9 +452,7 @@ class Environment:
     
     def nn(self, features, w):
         """
-        Recurrent neural network
-        tanh because it nicely squashes the output to [-1, 1], which I then scale by some number
-        which means the robot can adjust the angle by at most some radians per action 
+        Recurrent neural network that computes the policy (state-to-action mapping)
         """
         '''
         d_angle = w @ features 
@@ -537,18 +487,14 @@ class Environment:
         dist = np.array([distance for _, _, _, distance in self.sensors]).clip(0, 2*SENSOR_RANGE)  # inf -> 2*SENSOR_RANGE
         prox = 1-(dist/(SENSOR_RANGE//SENSOR_STEP_SIZE))-0.5  # -0.5 to center non-inf entries around 0 
         # Occupancy features 
-        # <temp>
-        # Ground truth for now
-        # TODO: use occupancy grid map
-        # ground_truth_occ_probs = self.obstacle_grid.flatten() 
-        # </temp>
-        # occ_probs = 1-1/(1+np.exp(self.occupancy.flatten())) 
+        # ground_truth_occ = self.obstacle_grid.flatten() 
+        occ_probs = 1-1/(1+np.exp(self.occupancy.flatten())) 
+        occ = (2*np.abs(occ_probs-0.5) > 0.9).astype(float)  # not just touched lightly, but actually visited -> high absolute cell entry 
+        # occ = (self.occupancy != 0).astype(float).flatten()  # simplify occupancy grid to binary "coverage map" 
         # Believed robot pose 
-        # <temp>
         # Ground truth for now
         # TODO: use Kalman filter belief pose
-        x, y, angle = self.robot_x, self.robot_y, self.robot_angle  
-        # </temp>
+        x, y, angle = self.robot_x, self.robot_y, self.robot_angle 
         # x, y, angle = self.belief_mean
         pos_min, pos_max = -SCREEN_SIZE/2, SCREEN_SIZE/2
         x = (x-pos_min)/(pos_max-pos_min)
@@ -563,8 +509,10 @@ class Environment:
             *self.hidden_state, 
             self.d_angle,
             # *occ_probs, 
-            # *ground_truth_occ_probs
+            *occ,
+            # *ground_truth_occ 
         ])
+        # print(features)
         return features 
 
     # Evolution --------------------------------------------------------------------------------------------------
@@ -578,8 +526,7 @@ class Environment:
 
         # Search distribution 
         search_mean = self.w  # "parent mean"
-        search_logstd = -2.0 * np.ones(len(search_mean))  # log std = -2.0 => std ≈ 0.14
-        # search_logstd = np.zeros(len(search_mean))  # "parent log std"
+        search_logstd = -1.5 * np.ones(len(search_mean))  # (log std, std): (-2, 0.14), (-1, 0.37), (-1.5, 0.22)
         
         f = np.empty(NUM_OFFSPRING)  # fitness scores 
         loggrad_mean = np.empty((NUM_OFFSPRING, self.num_weights))
@@ -604,8 +551,8 @@ class Environment:
                 noise = np.random.randn(self.num_weights)
                 for j in [-1, 1]:
                     start_time = time()
-                    print("  Offspring", i, end=" ")
-                    self.current_offspring = i
+                    print("  Offspring", i, end=" ") 
+                    self.current_offspring = i 
                     self.reset() 
                     # Sample 
                     w = search_mean + search_std * j * noise 
@@ -615,7 +562,7 @@ class Environment:
                     # Log-gradients of search parameters 
                     loggrad_mean[i] = (w-search_mean)/np.multiply(search_std, search_std)
                     loggrad_logstd[i] = np.multiply(w-search_mean, w-search_mean)/np.multiply(search_std, search_std)-1
-                    print([f"{round(time()-start_time, 1)} s"], [round(f[i].item(), 2)])
+                    print(f"{round(time()-start_time, 1)} s")
                     i += 1
             
             # Normalize fitness scores
@@ -658,7 +605,7 @@ class Environment:
         """
         Fitness function 
         """
-        # Run an evaluation episode 
+        # Run one or multiple evaluation episodes 
         # total_sensor_distance = 0.0 
         # sensor_max_squared_distance = 0.0
         for ep in range(NUM_EVAL_EPISODES):
@@ -672,25 +619,28 @@ class Environment:
                 if self.timestep >= EPISODE_LENGTH:
                     break 
         # Use data from evaluation episode to compute fitness score 
-        displacement_squared = self.robot_x**2 + self.robot_y**2  # squared distance between final position and spawn position 
-        # num_visited_cells = (self.occupancy.flatten() != 0).sum() 
+        # displacement_squared = self.robot_x**2 + self.robot_y**2  # squared distance between final position and spawn position 
+        # displacement = np.sqrt(displacement_squared)
+        num_visited_cells = (self.occupancy.flatten() != 0).sum() 
         # share_visited_cells = num_visited_cells/len(self.occupancy.flatten())
         fitness_components = [
-            5.0 * np.sqrt(displacement_squared),  # 10.0
-            1.0 * -self.collision_counter, 
-            1.0 * -self.sum_d_angle, 
-            # ? * -np.linalg.norm(w),
+            # 5.00 * displacement,             # go as far from starting point as possible
+            1.00 * num_visited_cells,        # visit as many distinct grid cells as possible 
+             0.001 * -self.collision_counter,  # collide as little as possible
+            # 0.01 * -self.sum_d_angle,        # move (rotate) as little as possible 
+            # 1.00 * -np.sum(w**2),            # L2 regularization
         ]
-        # print(np.array(fitness_components))
-        return 1/(EPISODE_LENGTH*NUM_EVAL_EPISODES) * sum(fitness_components)
+        score = 1/(EPISODE_LENGTH*NUM_EVAL_EPISODES) * sum(fitness_components)
+        print("\t", [round(float(component), 4) for component in fitness_components], "\t", [round(float(score), 4)], end="\t")
+        return score 
 
 if __name__ == "__main__":
     # PyGame
     os.environ["SDL_VIDEODRIVER"] = "dummy" 
-    pygame.init()
+    pygame.init() 
 
-    # Environment 
-    env = Environment() 
+    # Evolution environment 
+    env = Evolution() 
     # env.load_weights()  # load most recent (or particular) weights to continue evolution from there 
     env.evolve()
     
