@@ -45,6 +45,11 @@ class Demo(Evolution):
     # Initialization ---------------------------------------------------------------------------------------------
     
     def reset(self, reset_map=True, reset_screen_capture=True):
+        """
+        Reset the map and robot, but not the evolution or 
+        This method can be called for each new offspring to generate a new map and robot,
+        without resetting the ID or evolutionary history. 
+        """
         self.timestep = 0 
         if reset_map:
             self.initialize_map()
@@ -70,7 +75,6 @@ class Demo(Evolution):
         self.beacon_bearings = []
         
         '''
-        # <temp>
         # Just for some testing, generate beacons completely randomly 
         #  and independently of obstacles!! (i.e. not as corners of obstacles!)
         if NUM_BEACONS > 0:
@@ -93,10 +97,8 @@ class Demo(Evolution):
                 # Once we have NUM_BEACONS beacons, leave the while loop
                 if len(self.beacons) == NUM_BEACONS:
                     break 
-        # </temp>
         '''
 
-        # '''
         if (NUM_BEACONS > 0) or (NUM_BEACONS is None):
             corners = set()
             remove = set()
@@ -123,13 +125,14 @@ class Demo(Evolution):
                 self.beacons.append((x, y))
                 self.beacon_distances.append(inf) 
                 self.beacon_bearings.append(0)
-        # '''
 
     def initialize_belief(self):
-        # Belief is the robot's belief of its own pose in absolute terms! 
-        # Initialize belief at spawn point (local localization!) 
-        #  and set small variance.
-        #  For global localization, use random initial point and large variance.
+        """
+        Initialize the mean and covariance of the belief according to the Kalman Filter.
+        Belief is the robot's belief of its own pose in absolute terms! 
+        Initialize belief at spawn point (local localization!) and set a small variance.
+        For global localization, use random initial point and large variance.
+        """
         self.belief_mean = np.array([self.spawn_x, self.spawn_y, self.robot_angle])
         self.belief_cov = V 
         # Initialize belief trajectory 
@@ -286,12 +289,19 @@ class Demo(Evolution):
     # Drawing ----------------------------------------------------------------------------------------------------
     
     def draw_obstacles(self):
+        """
+        Render obstacle blocks.
+        """
         if not obstacles_visible:
             return 
         for obs in self.obstacles: 
             pygame.draw.rect(screen, OBSTACLE_COLOR, obs) 
     
     def draw_beacons(self):
+        """
+        Render beacons and circles around detected beacons with radius being the distance
+        to the robot.
+        """
         if not beacon_visible:
             return 
         for i, ((beacon_x, beacon_y), distance) in enumerate(zip(self.beacons, self.beacon_distances)):
@@ -313,6 +323,10 @@ class Demo(Evolution):
             '''
     
     def draw_grid(self):
+        """
+        Render occupancy grid map using the occupancy log-odds to determine the color intensity. 
+        Specially highlight those grid cells that are in the robot's sensor range.
+        """
         if not grid_visible:
             return 
         # Draw occupancy values 
@@ -353,6 +367,10 @@ class Demo(Evolution):
                         pygame.draw.rect(screen, (255, 255, 0), (cell_x, cell_y, GRID_CELL_SIZE, GRID_CELL_SIZE), 1)
 
     def draw_robot(self):
+        """
+        Render the robot's body itself, trajectory, robot-related information (text),
+        and robot-related Kalman estimates (estimated pose)
+        """
         # Draw trajectory (past positions)
         if trajectory_visible:
             points = [(self.spawn_x+x, self.spawn_y+y) for x, y in self.trajectory]
@@ -361,13 +379,11 @@ class Demo(Evolution):
         # Get robot's current (absolute) position
         x, y = self.spawn_x + self.robot_x, self.spawn_y + self.robot_y 
         if robot_info_visible:
-            # '''
             # Draw sensors
             for sensor_x, sensor_y, hit, _ in self.sensors:
                 color = SENSOR_HIT_COLOR if hit else SENSOR_COLOR
                 pygame.draw.line(screen, color, (x, y), (self.spawn_x+sensor_x, self.spawn_y+sensor_y), 2)
                 # pygame.draw.circle(screen, color, (self.spawn_x+sensor_x, self.spawn_y+sensor_y), 3)
-            # '''
             # Draw omnidirectional sensor (circle around robot indicating OMNI_RANGE)
             '''
             pygame.draw.circle(screen, ROBOT_COLOR, (x, y), OMNI_RANGE, 2)
@@ -400,7 +416,6 @@ class Demo(Evolution):
         if beacon_visible and self.observation is not None:
             est_x, est_y, _ = self.observation 
             pygame.draw.circle(screen, (255, 255, 255), (est_x, est_y), 3)
-        # '''
         # Draw motor speed text inside the robot body
         if robot_info_visible:
             # vel_text = font.render(f"[{self.v_l}, {self.v_r}]", True, (255, 255, 255))
@@ -417,9 +432,11 @@ class Demo(Evolution):
                     distance_text = font.render(str(round(proximity, 2)), True, (255, 255, 255) if hit else (100, 100, 100))
                     text_rect = distance_text.get_rect(center=(text_x, text_y))
                     screen.blit(distance_text, text_rect)
-        # '''
 
     def draw_belief(self):
+        """
+        Render the estimated robot's body and trajectory according to the Kalman filter.
+        """
         # Draw trajectory (i.e. past believed positions)
         if trajectory_visible:
             pygame.draw.lines(screen, (30, 30, 90), False, self.belief_trajectory, 3)
@@ -438,9 +455,8 @@ class Demo(Evolution):
         ellipse = pygame.Rect(mean_x-ellipse_width/2, mean_y-ellipse_height/2, ellipse_width, ellipse_height)
         # pygame.draw.rect(screen, (30, 30, 200), ellipse, 2) 
         pygame.draw.ellipse(screen, (30, 30, 200), ellipse, 2)
-        # Draw orientation uncertainty (???)
+        # Draw orientation uncertainty
         # angle = np.arctan2(*vecs[:,0][::-1])  # angle of major axis (in radians)
-        # TODO
 
         # Draw the robot body (disk) at (mean) believed location 
         pygame.draw.circle(screen, (50, 50, 255), (mean_x, mean_y), ROBOT_RADIUS)
@@ -450,9 +466,16 @@ class Demo(Evolution):
         pygame.draw.line(screen, (0, 0, 0), (mean_x, mean_y), (heading_x, heading_y), 3)
 
     def draw_target(self):
+        """
+        Render the target by drawing the star image in the target cell
+        (see initialize_target method).
+        """
         screen.blit(TARGET_IMAGE, (self.target_x-TARGET_IMAGE_SIZE/2, self.target_y-TARGET_IMAGE_SIZE/2))
 
     def save_frame(self): 
+        """
+        Append current frame to list of frames, so that this list can later be turned into a video. 
+        """
         frame_surface = pygame.display.get_surface().copy()
         frame_array3d = pygame.surfarray.array3d(frame_surface) 
         # Only add if frame is not empty and different from last frame 
@@ -463,6 +486,10 @@ class Demo(Evolution):
             self.prev_frame = frame_array3d 
     
     def to_video(self):
+        """
+        Turn saved list of frames into a mp4 file and save it. 
+        This method can be called using the keyboard shortcut CMD + S (or CTRL + S). 
+        """
         if len(self.frames) == 0: 
             return
         if not os.path.exists("screencapture"):
@@ -478,11 +505,15 @@ class Demo(Evolution):
                 writer.append_data(np.array(frame))
     
     def render(self):
+        """
+        Call all draw methods. 
+        This method is called each timestep to render the current state of the map and robot. 
+        """
         screen.fill(BACKGROUND_COLOR)
         self.draw_grid()
         self.draw_obstacles()
         self.draw_beacons()
-        # self.draw_belief() 
+        self.draw_belief() 
         self.draw_target()
         self.draw_robot()
         pygame.display.flip()

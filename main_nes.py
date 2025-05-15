@@ -47,9 +47,6 @@ LR_MEAN = 0.2  # 0.1, 0.05
 LR_LOGSTD = 0.2  # 0.1, 0.05
 # Noise
 R = np.diag([1e-6, 1e-6, 1e-6])  # motion-noise covariance
-'''
-Q = np.diag([1e-6, 1e-6, 1e-6])  # sensor-noise covariance
-'''
 
 
 class Evolution:
@@ -57,22 +54,32 @@ class Evolution:
     # Initialization ---------------------------------------------------------------------------------------------
     
     def __init__(self):
+        """
+        Initialize the environment by resetting all map and robot settings, 
+        generating an ID and initializing the evolution procedure.
+        """
         self.reset()
         self.initialize_id()
         self.initialize_evolution()
 
     def reset(self, reset_map=True):
+        """
+        Reset the map and robot, but not the evolution or 
+        This method can be called for each new offspring to generate a new map and robot,
+        without resetting the ID or evolutionary history. 
+        """
         self.timestep = 0 
         if reset_map:
             self.initialize_map()
             self.initialize_target()
         self.initialize_robot()
-        '''
-        self.initialize_belief()
-        '''
         self.initialize_grid()
 
     def initialize_id(self):
+        """
+        Read in the "history" directory what the most recent ID was and simply increment it
+        to obtain the ID for this run. 
+        """
         past_ids = [int(f[:f.index("_")]) for f in os.listdir("history") 
                     if ".npy" in f and f[:f.index("_")].isnumeric()]
         most_recent_id = max([0, *past_ids])
@@ -108,6 +115,11 @@ class Evolution:
         ])
     
     def initialize_robot(self):
+        """
+        Initialize robot's initial pose, initial sensor readings, initial action, 
+        the robot's trajectory, and robot-related statistics, like the collision counter 
+        and total distance traveled. 
+        """
         # Pose 
         # Important: robot_x, robot_y store the robot's relative position!
         #  To get the absolute position, add the spawn position (spawn_x, spawn_y)
@@ -117,12 +129,6 @@ class Evolution:
         # Find a good spawn point 
         self.spawn_x = SCREEN_SIZE/2  # x-position
         self.spawn_y = SCREEN_SIZE/2  # y-position 
-        # TODO: make so that spawn angle could be anything, 
-        #  and robot_angle is also relative!! 
-        #  When the robot spawns, it doesn't necessarily know its absolute direction!! 
-        #  Though, if we do local localization, we presumably also tell it its 
-        #  initial orientation.
-        # self.spawn_angle = 0 
         # Make sure the robot is not placed on top of or inside an obstacle: 
         while self.is_colliding():
             # Reposition the robot's spawn randomly within the map bounds:
@@ -133,9 +139,6 @@ class Evolution:
         # Sensors
         # Get initial sensor reading 
         self.compute_sensors()
-        '''
-        self.compute_omni()
-        '''
         # Just for visualization, also keep track of these values inside self
         # (rather than just passing them as parameters to the move method)
         self.v_l = 0
@@ -146,20 +149,10 @@ class Evolution:
         self.collision_counter = 0
         self.distance_traveled = 0 
     
-    '''
-    def initialize_belief(self):
-        # Belief is the robot's belief of its own pose in absolute terms! 
-        # Initialize belief at spawn point (local localization!) 
-        #  and set small variance.
-        #  For global localization, use random initial point and large variance.
-        self.belief_mean = np.array([self.spawn_x, self.spawn_y, self.robot_angle])
-        self.belief_cov = V 
-        # Initialize belief trajectory 
-        self.belief_trajectory = [self.belief_mean[:2]]
-    '''
-
     def initialize_grid(self):
         """
+        Initialize the occupancy grid and variables used to track the occupancy grid mapping, 
+        like the robot's distance to each grid cell within sensor range. 
         """
         self.grid = np.zeros((NUM_GRID_CELLS, NUM_GRID_CELLS, 2))  # coordinates of grid cell centers 
         self.grid_distances = inf*np.ones((NUM_GRID_CELLS, NUM_GRID_CELLS))  # current distances from robot to grid cell centers
@@ -171,6 +164,10 @@ class Evolution:
                 self.grid[i,j] = (cell_center_x, cell_center_y)
 
     def initialize_target(self):
+        """
+        Generate a random position in the map (only free cells and not in the map center area), 
+        and place the target (rescuee) there.
+        """
         obstacle_grid = self.obstacle_grid.copy()
         # Let's block the center region so the target is somewhere further away from the center 
         center = NUM_CELLS//2 
@@ -185,6 +182,9 @@ class Evolution:
         self.target_y = target_j*CELL_SIZE + CELL_SIZE//2
 
     def initialize_evolution(self):
+        """
+        Initialize all the parameters necessary for the evolutionary procedure. 
+        """
         self.current_generation = 0
         self.current_eval_episode = 0
         self.current_offspring = 0
@@ -203,9 +203,6 @@ class Evolution:
         Transition from current environment state to the next 
         """
         self.compute_sensors()
-        '''
-        self.compute_omni()
-        '''
         self.compute_occupancy()
         self.timestep += 1
     
@@ -226,9 +223,6 @@ class Evolution:
         # Keep track of v_l, v_r so we can put it on screen as text 
         #  (see draw_robot method)
         self.v_l, self.v_r = v_l, v_r 
-        # Keep track of current robot pose 
-        old_x = self.robot_x
-        old_y = self.robot_y
         # old_angle = self.robot_angle
         # Calculate linear and angular velocities from v_l, v_r 
         v_linear = MOVE_SPEED * (v_l + v_r) / 2  # Average speed of both motors
@@ -422,18 +416,29 @@ class Evolution:
     # Navigation -------------------------------------------------------------------------------------------------
     
     def load_weights(self, evol_id=None):
+        """
+        Load weights from file corresponding to the given evol_id.
+        """
         if evol_id is None:
             evol_id = self.evol_id-1
         print("ID:", evol_id)
         self.w = np.load(f"weights/{evol_id}.npy")
 
     def angle_difference_to_velocities(self, d_angle):
+        """
+        Convert d_angle (e.g. from policy network) to (v_l, v_r) so it can be passed
+        to the move method. 
+        """
         v_linear = 1.0  # constant forward speed
         v_l = (v_linear - ROBOT_RADIUS * ROTATE_SPEED * d_angle) / MOVE_SPEED
         v_r = (v_linear + ROBOT_RADIUS * ROTATE_SPEED * d_angle) / MOVE_SPEED
         return v_l, v_r
 
     def move_autonomously(self, w=None):
+        """
+        This method calls the compute_features method and the policy network 
+        in those timesteps in which an action is applied (depending on the action frequency). 
+        """
         # Compute new action every 1/freq timesteps 
         if self.timestep % int(1/ACTION_FREQUENCY) == 0:
             if w is None:
@@ -454,14 +459,6 @@ class Evolution:
         """
         Recurrent neural network that computes the policy (state-to-action mapping)
         """
-        '''
-        d_angle = w @ features 
-        # d_angle = np.tanh(z) * (pi/2)  # [-90°, 90°]
-        '''
-        '''
-        W = w.reshape((NUM_OUTPUTS, -1))  # where NUM_OUTPUTS = (num control units) + (num hidden units) 
-        d_angle = W @ features.T 
-        '''
         # Extracting the layers' weight matrices, W0 and W1, from the flattened weight vector, w 
         n0, n1 = self.num_weights_by_layer
         W0 = w[:n0].reshape((NUM_HIDDEN_UNITS, self.num_features+1)) 
@@ -516,6 +513,9 @@ class Evolution:
     def evolve(self): 
         """
         Natural evolution strategy (NES) algorithm 
+        Loops over specified number of generations, and all offspring per generation, 
+        calls fitness evaluation method, and applied the parameter according to the NES algorithm.
+        It saves the statistics and final weights of this run. 
         """
         print("ID:", self.evol_id)
         evolution_start_time = time()
@@ -599,7 +599,9 @@ class Evolution:
 
     def evaluate(self, w): 
         """
-        Fitness function 
+        Fitness function evaluation
+        Runs NUM_EVAL_EPISODES, extracts the relevant statistics, averages them across these episodes,
+        and returns the corresponding fitness score for the given weight vector w.
         """
         # Run one or multiple evaluation episodes 
         # total_sensor_distance = 0.0 
@@ -609,7 +611,6 @@ class Evolution:
             while True:
                 self.move_autonomously(w) 
                 # sensor_squared_distances = [min(dist, SENSOR_RANGE//SENSOR_STEP_SIZE)**2 for _, _, _, dist in self.sensors] 
-                # Perhaps feed through function to make hits really negative; but no discontinuities! 
                 # total_sensor_distance += sum(sensor_squared_distances) 
                 # sensor_max_squared_distance += max([min(dist, SENSOR_RANGE//SENSOR_STEP_SIZE)**2 for _, _, _, dist in self.sensors] )
                 if self.timestep >= EPISODE_LENGTH:
