@@ -487,13 +487,11 @@ class Evolution:
         dist = np.array([distance for _, _, _, distance in self.sensors]).clip(0, 2*SENSOR_RANGE)  # inf -> 2*SENSOR_RANGE
         prox = 1-(dist/(SENSOR_RANGE//SENSOR_STEP_SIZE))-0.5  # -0.5 to center non-inf entries around 0 
         # Occupancy features 
-        # ground_truth_occ = self.obstacle_grid.flatten() 
+        # occ = self.obstacle_grid.flatten() 
         occ_probs = 1-1/(1+np.exp(self.occupancy.flatten())) 
         occ = (2*np.abs(occ_probs-0.5) > 0.9).astype(float)  # not just touched lightly, but actually visited -> high absolute cell entry 
         # occ = (self.occupancy != 0).astype(float).flatten()  # simplify occupancy grid to binary "coverage map" 
-        # Believed robot pose 
-        # Ground truth for now
-        # TODO: use Kalman filter belief pose
+        # Robot pose 
         x, y, angle = self.robot_x, self.robot_y, self.robot_angle 
         # x, y, angle = self.belief_mean
         pos_min, pos_max = -SCREEN_SIZE/2, SCREEN_SIZE/2
@@ -508,9 +506,7 @@ class Evolution:
             *prox,
             *self.hidden_state, 
             self.d_angle,
-            # *occ_probs, 
             *occ,
-            # *ground_truth_occ 
         ])
         # print(features)
         return features 
@@ -625,8 +621,8 @@ class Evolution:
         # share_visited_cells = num_visited_cells/len(self.occupancy.flatten())
         fitness_components = [
             # 5.00 * displacement,             # go as far from starting point as possible
-            1.00 * num_visited_cells,        # visit as many distinct grid cells as possible 
-             0.001 * -self.collision_counter,  # collide as little as possible
+            1.00 * num_visited_cells,          # visit as many distinct grid cells as possible 
+            0.001 * -self.collision_counter,   # collide as little as possible
             # 0.01 * -self.sum_d_angle,        # move (rotate) as little as possible 
             # 1.00 * -np.sum(w**2),            # L2 regularization
         ]
