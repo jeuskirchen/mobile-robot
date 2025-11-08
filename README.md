@@ -1,6 +1,6 @@
 # mobile-robot
 
-Simulation of a mobile robot using EKF-SLAM, occupancy grid mapping and natural evolution strategies (NES), built for the course "Autonomous Robotics System" (2025) in M.Sc. Artificial Intelligence at Maastricht University.
+Simulation of a mobile robot using EKF-SLAM, occupancy grid mapping and natural evolution strategies (NES), built for the course "**Autonomous Robotics Systems**" (2025) in M.Sc. Artificial Intelligence at Maastricht University.
 
 ### Fitness and diversity of the evolved agent over time
 
