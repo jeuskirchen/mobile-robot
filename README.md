@@ -31,3 +31,21 @@ Earlier version of the evolved policy under a different fitness function, which 
 <p align="center">
     <img src="figures/behavior2.gif?v=1" alt="" style="width: 500px; height: auto;"/>
 </p>
+
+---
+
+### Demonstration of trilateration
+
+Actual state in red and belief state in blue. The actual state may deviate due to motion noise, but gets corrected by applying the Bayes filter using the trilateration data. 
+
+<p align="center">
+    <img src="figures/trilateration.gif?v=1" alt="" style="width: 500px; height: auto;"/>
+</p>
+
+---
+
+### Demonstration of a discrete Bayes filter 
+
+<p align="center">
+    <img src="figures/localization-discrete-bayes-filter.gif?v=1" alt="" style="width: 500px; height: auto;"/>
+</p>
