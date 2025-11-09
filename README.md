@@ -11,7 +11,7 @@ Simulation of a mobile robot using EKF-SLAM, occupancy grid mapping and natural 
 1D example of an optimization process using natural evolution strategies. The solution is $x=9$ (value with maximum fitness) and the initialization is at $x=0$. Over 20 generations, the parameters of the search distribution are updated such that its mean is approximately at the solution value. 
 
 <p align="center">
-    <img src="figures/nes.gif?v=1" alt="" style="width: 970px; height: auto;"/>
+    <img src="figures/nes2.gif?v=1" alt="" style="width: 970px; height: auto;"/>
 </p>
 
 ---
