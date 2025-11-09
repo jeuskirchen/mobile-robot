@@ -25,3 +25,9 @@ Earlier version of the evolved policy under a different fitness function, which 
 <p align="center">
     <img src="figures/behavior2.gif?v=1" alt="" style="width: 500px; height: auto;"/>
 </p>
+
+—
+
+<p align="center">
+    <img src="figures/nes.gif?v=1" alt="" style="width: 500px; height: auto;"/>
+</p>
