@@ -44,7 +44,7 @@ Actual state in red and belief state in blue. The actual state may deviate due t
 
 ---
 
-### Demonstration of a discrete Bayes filter 
+### Demonstration of a discrete Bayes filter for localization 
 
 <p align="center">
     <img src="figures/localization-discrete-bayes-filter.gif?v=1" alt="" style="width: 500px; height: auto;"/>
