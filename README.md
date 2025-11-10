@@ -36,7 +36,7 @@ Earlier version of the evolved policy under a different fitness function, which 
 
 ### Demonstration of trilateration
 
-Actual state in red and belief state in blue. The actual state may deviate due to motion noise, but gets corrected by applying the Bayes filter using the trilateration data. 
+Actual state in red and belief state in blue. The actual state may deviate due to motion noise, but the belief state then gets corrected by applying the Bayes filter using the trilateration data. 
 
 <p align="center">
     <img src="figures/trilateration.gif?v=1" alt="" style="width: 500px; height: auto;"/>
@@ -44,7 +44,9 @@ Actual state in red and belief state in blue. The actual state may deviate due t
 
 ---
 
-### Demonstration of a discrete Bayes filter for localization 
+### Demonstration of a discrete Bayes filter (Histogram filter) for localization 
+
+The 8 cells adjacent to the agent (also shown in the upper right corner of the image) combined with the action is the (noisy) evidence that is used to update the belief state. 
 
 <p align="center">
     <img src="figures/localization-discrete-bayes-filter.gif?v=1" alt="" style="width: 500px; height: auto;"/>
