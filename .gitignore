@@ -2,6 +2,7 @@
 screencapture/ 
 archive/ 
 *.ipynb 
+history/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
